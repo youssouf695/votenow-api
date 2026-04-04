@@ -1,0 +1,1082 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>VoteNow — Plateforme de Vote Premium</title>
+<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,700;0,900;1,400;1,700&family=DM+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
+<style>
+:root {
+  --bg: #080810;
+  --bg2: #0e0e1c;
+  --bg3: #13131f;
+  --gold: #c9a84c;
+  --gold-light: #e8c96a;
+  --gold-dim: rgba(201,168,76,0.15);
+  --white: #f4f0e8;
+  --muted: #6b6880;
+  --border: rgba(201,168,76,0.15);
+  --glass: rgba(255,255,255,0.03);
+}
+
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+html { scroll-behavior: smooth; }
+
+body {
+  background: var(--bg);
+  color: var(--white);
+  font-family: 'DM Sans', sans-serif;
+  font-weight: 300;
+  overflow-x: hidden;
+}
+
+/* ── GRAIN OVERLAY ── */
+body::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 512 512' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.75' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.04'/%3E%3C/svg%3E");
+  pointer-events: none;
+  z-index: 1000;
+  opacity: 0.4;
+}
+
+/* ── CANVAS PARTICLES ── */
+#particles { position: fixed; inset: 0; pointer-events: none; z-index: 0; }
+
+/* ── NAV ── */
+nav {
+  position: fixed;
+  top: 0; left: 0; right: 0;
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 22px 60px;
+  background: linear-gradient(to bottom, rgba(8,8,16,0.95), transparent);
+  backdrop-filter: blur(12px);
+  transition: background 0.3s;
+}
+
+nav.scrolled {
+  background: rgba(8,8,16,0.97);
+  border-bottom: 1px solid var(--border);
+}
+
+.nav-logo {
+  font-family: 'Playfair Display', serif;
+  font-size: 1.5rem;
+  font-weight: 700;
+  color: var(--gold-light);
+  letter-spacing: 0.02em;
+  text-decoration: none;
+}
+
+.nav-logo span { color: var(--white); font-style: italic; }
+
+.nav-links {
+  display: flex;
+  gap: 36px;
+  list-style: none;
+}
+
+.nav-links a {
+  color: var(--muted);
+  text-decoration: none;
+  font-size: 0.85rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  transition: color 0.2s;
+}
+
+.nav-links a:hover { color: var(--gold-light); }
+
+.nav-cta {
+  background: var(--gold);
+  color: #080810;
+  border: none;
+  padding: 10px 24px;
+  font-family: 'DM Sans', sans-serif;
+  font-size: 0.82rem;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  cursor: pointer;
+  transition: all 0.25s;
+  text-decoration: none;
+}
+
+.nav-cta:hover {
+  background: var(--gold-light);
+  transform: translateY(-1px);
+  box-shadow: 0 8px 24px rgba(201,168,76,0.3);
+}
+
+/* ── HERO ── */
+.hero {
+  position: relative;
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  padding: 140px 20px 100px;
+  overflow: hidden;
+}
+
+.hero-glow {
+  position: absolute;
+  width: 700px;
+  height: 700px;
+  background: radial-gradient(circle, rgba(201,168,76,0.08) 0%, transparent 70%);
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+}
+
+.hero-line {
+  position: absolute;
+  width: 1px;
+  background: linear-gradient(to bottom, transparent, var(--gold), transparent);
+  opacity: 0.3;
+}
+
+.hero-line:nth-child(1) { left: 20%; height: 60%; top: 20%; animation: linepulse 4s ease-in-out infinite; }
+.hero-line:nth-child(2) { left: 80%; height: 40%; top: 30%; animation: linepulse 4s ease-in-out infinite 1.5s; }
+
+@keyframes linepulse {
+  0%, 100% { opacity: 0.1; }
+  50% { opacity: 0.4; }
+}
+
+.hero-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid var(--border);
+  padding: 7px 16px;
+  font-size: 0.72rem;
+  letter-spacing: 0.15em;
+  text-transform: uppercase;
+  color: var(--gold);
+  margin-bottom: 32px;
+  animation: fadeup 0.8s ease both;
+}
+
+.hero-tag::before {
+  content: '';
+  width: 6px; height: 6px;
+  background: var(--gold);
+  border-radius: 50%;
+  animation: blink 1.5s ease-in-out infinite;
+}
+
+@keyframes blink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.2; }
+}
+
+.hero h1 {
+  font-family: 'Playfair Display', serif;
+  font-size: clamp(3.2rem, 8vw, 7rem);
+  line-height: 1.05;
+  font-weight: 900;
+  margin-bottom: 28px;
+  animation: fadeup 0.8s ease 0.2s both;
+}
+
+.hero h1 em {
+  font-style: italic;
+  color: var(--gold);
+  display: block;
+}
+
+.hero p {
+  max-width: 520px;
+  margin: 0 auto 44px;
+  color: var(--muted);
+  font-size: 1.05rem;
+  line-height: 1.75;
+  animation: fadeup 0.8s ease 0.4s both;
+}
+
+.hero-btns {
+  display: flex;
+  gap: 16px;
+  justify-content: center;
+  flex-wrap: wrap;
+  animation: fadeup 0.8s ease 0.6s both;
+}
+
+.btn-primary {
+  background: var(--gold);
+  color: #080810;
+  padding: 15px 36px;
+  font-family: 'DM Sans', sans-serif;
+  font-size: 0.88rem;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  border: none;
+  cursor: pointer;
+  transition: all 0.25s;
+  text-decoration: none;
+  display: inline-block;
+}
+
+.btn-primary:hover {
+  background: var(--gold-light);
+  transform: translateY(-2px);
+  box-shadow: 0 12px 32px rgba(201,168,76,0.35);
+}
+
+.btn-secondary {
+  background: transparent;
+  color: var(--white);
+  padding: 15px 36px;
+  font-family: 'DM Sans', sans-serif;
+  font-size: 0.88rem;
+  font-weight: 500;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  border: 1px solid rgba(244,240,232,0.2);
+  cursor: pointer;
+  transition: all 0.25s;
+  text-decoration: none;
+  display: inline-block;
+}
+
+.btn-secondary:hover {
+  border-color: var(--gold);
+  color: var(--gold);
+}
+
+/* ── STATS BAR ── */
+.stats-bar {
+  position: relative;
+  padding: 0 60px;
+  margin-bottom: 100px;
+  animation: fadeup 0.8s ease 0.8s both;
+}
+
+.stats-inner {
+  max-width: 900px;
+  margin: 0 auto;
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  border: 1px solid var(--border);
+  background: var(--glass);
+  backdrop-filter: blur(10px);
+}
+
+.stat-item {
+  padding: 32px;
+  text-align: center;
+  border-right: 1px solid var(--border);
+  position: relative;
+}
+
+.stat-item:last-child { border-right: none; }
+
+.stat-num {
+  font-family: 'Playfair Display', serif;
+  font-size: 2.4rem;
+  font-weight: 700;
+  color: var(--gold-light);
+  display: block;
+}
+
+.stat-label {
+  font-size: 0.75rem;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--muted);
+  margin-top: 4px;
+  display: block;
+}
+
+/* ── SECTION SHARED ── */
+section {
+  position: relative;
+  padding: 100px 60px;
+}
+
+.section-label {
+  font-size: 0.7rem;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: var(--gold);
+  margin-bottom: 16px;
+  display: block;
+}
+
+.section-title {
+  font-family: 'Playfair Display', serif;
+  font-size: clamp(2rem, 4vw, 3.2rem);
+  font-weight: 700;
+  line-height: 1.2;
+  margin-bottom: 16px;
+}
+
+.section-title em { font-style: italic; color: var(--gold); }
+
+.section-sub {
+  color: var(--muted);
+  font-size: 0.95rem;
+  line-height: 1.7;
+  max-width: 480px;
+}
+
+/* ── FEATURES ── */
+.features-section {
+  background: var(--bg2);
+}
+
+.features-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 60px;
+  align-items: center;
+  max-width: 1200px;
+  margin: 60px auto 0;
+}
+
+.features-list {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
+
+.feature-item {
+  display: flex;
+  gap: 20px;
+  padding: 24px;
+  border: 1px solid transparent;
+  transition: all 0.3s;
+  cursor: default;
+}
+
+.feature-item:hover {
+  border-color: var(--border);
+  background: var(--glass);
+}
+
+.feature-icon {
+  width: 44px; height: 44px;
+  background: var(--gold-dim);
+  border: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1.1rem;
+  flex-shrink: 0;
+}
+
+.feature-text h3 {
+  font-family: 'Playfair Display', serif;
+  font-size: 1.05rem;
+  font-weight: 700;
+  margin-bottom: 6px;
+}
+
+.feature-text p {
+  font-size: 0.85rem;
+  color: var(--muted);
+  line-height: 1.65;
+}
+
+/* Mock Event Card */
+.mock-card {
+  background: var(--bg3);
+  border: 1px solid var(--border);
+  border-radius: 2px;
+  overflow: hidden;
+  box-shadow: 0 40px 80px rgba(0,0,0,0.6);
+  transform: perspective(800px) rotateY(-6deg) rotateX(2deg);
+  transition: transform 0.4s;
+}
+
+.mock-card:hover {
+  transform: perspective(800px) rotateY(-2deg) rotateX(1deg);
+}
+
+.mock-header {
+  background: linear-gradient(135deg, #1a1528, #0e0e1c);
+  padding: 24px;
+  border-bottom: 1px solid var(--border);
+  position: relative;
+  overflow: hidden;
+}
+
+.mock-header::after {
+  content: '';
+  position: absolute;
+  top: -50%;
+  right: -20%;
+  width: 200px;
+  height: 200px;
+  background: radial-gradient(circle, rgba(201,168,76,0.12), transparent);
+}
+
+.mock-event-title {
+  font-family: 'Playfair Display', serif;
+  font-size: 1.1rem;
+  font-weight: 700;
+  color: var(--gold-light);
+}
+
+.mock-event-date {
+  font-size: 0.72rem;
+  color: var(--muted);
+  margin-top: 4px;
+  letter-spacing: 0.05em;
+}
+
+.mock-live-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: rgba(239,68,68,0.15);
+  border: 1px solid rgba(239,68,68,0.3);
+  color: #f87171;
+  font-size: 0.65rem;
+  padding: 3px 10px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  margin-top: 10px;
+}
+
+.mock-live-badge::before {
+  content: '';
+  width: 5px; height: 5px;
+  background: #f87171;
+  border-radius: 50%;
+  animation: blink 1s infinite;
+}
+
+.mock-candidates {
+  padding: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.mock-candidate {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.mock-avatar {
+  width: 36px; height: 36px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  background: linear-gradient(135deg, var(--gold-dim), var(--bg));
+  border: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.8rem;
+}
+
+.mock-cname {
+  font-size: 0.82rem;
+  font-weight: 500;
+  flex: 1;
+}
+
+.mock-bar-wrap {
+  flex: 2;
+  height: 6px;
+  background: rgba(255,255,255,0.05);
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.mock-bar {
+  height: 100%;
+  background: linear-gradient(to right, var(--gold), var(--gold-light));
+  border-radius: 3px;
+  transition: width 1s ease;
+}
+
+.mock-pct {
+  font-size: 0.72rem;
+  color: var(--gold);
+  font-weight: 600;
+  min-width: 32px;
+  text-align: right;
+}
+
+.mock-footer {
+  padding: 16px 20px;
+  border-top: 1px solid var(--border);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 0.75rem;
+  color: var(--muted);
+}
+
+.mock-vote-btn {
+  background: var(--gold);
+  color: #080810;
+  border: none;
+  padding: 8px 20px;
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  cursor: pointer;
+}
+
+/* ── HOW IT WORKS ── */
+.hiw-section { text-align: center; }
+
+.hiw-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 2px;
+  max-width: 960px;
+  margin: 60px auto 0;
+  background: var(--border);
+}
+
+.hiw-item {
+  background: var(--bg);
+  padding: 48px 36px;
+  text-align: center;
+  position: relative;
+  transition: background 0.3s;
+}
+
+.hiw-item:hover { background: var(--bg3); }
+
+.hiw-number {
+  font-family: 'Playfair Display', serif;
+  font-size: 4rem;
+  font-weight: 900;
+  color: var(--gold-dim);
+  line-height: 1;
+  margin-bottom: 16px;
+  background: linear-gradient(to bottom, var(--gold-light), transparent);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+
+.hiw-item h3 {
+  font-family: 'Playfair Display', serif;
+  font-size: 1.1rem;
+  font-weight: 700;
+  margin-bottom: 12px;
+}
+
+.hiw-item p {
+  font-size: 0.83rem;
+  color: var(--muted);
+  line-height: 1.7;
+}
+
+/* ── PRICING ── */
+.pricing-section {
+  background: var(--bg2);
+}
+
+.pricing-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 2px;
+  max-width: 800px;
+  margin: 60px auto 0;
+  background: var(--border);
+}
+
+.price-card {
+  background: var(--bg);
+  padding: 48px 40px;
+  position: relative;
+  transition: background 0.3s;
+}
+
+.price-card.featured {
+  background: var(--bg3);
+}
+
+.price-card.featured::before {
+  content: 'POPULAIRE';
+  position: absolute;
+  top: -1px; right: 32px;
+  background: var(--gold);
+  color: #080810;
+  font-size: 0.6rem;
+  font-weight: 700;
+  letter-spacing: 0.15em;
+  padding: 5px 12px;
+}
+
+.price-name {
+  font-size: 0.7rem;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: var(--gold);
+  margin-bottom: 12px;
+  display: block;
+}
+
+.price-amount {
+  font-family: 'Playfair Display', serif;
+  font-size: 3rem;
+  font-weight: 900;
+  line-height: 1;
+  margin-bottom: 4px;
+}
+
+.price-amount sup {
+  font-size: 1rem;
+  font-weight: 400;
+  vertical-align: super;
+}
+
+.price-period {
+  font-size: 0.75rem;
+  color: var(--muted);
+  margin-bottom: 32px;
+  display: block;
+}
+
+.price-features {
+  list-style: none;
+  margin-bottom: 36px;
+}
+
+.price-features li {
+  font-size: 0.85rem;
+  color: var(--muted);
+  padding: 8px 0;
+  border-bottom: 1px solid rgba(255,255,255,0.04);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.price-features li::before {
+  content: '✦';
+  color: var(--gold);
+  font-size: 0.6rem;
+}
+
+.price-features li.included { color: var(--white); }
+
+/* ── CTA ── */
+.cta-section {
+  text-align: center;
+  background: linear-gradient(to bottom, var(--bg), var(--bg2));
+}
+
+.cta-box {
+  max-width: 700px;
+  margin: 0 auto;
+  padding: 80px 60px;
+  border: 1px solid var(--border);
+  background: var(--glass);
+  backdrop-filter: blur(20px);
+  position: relative;
+  overflow: hidden;
+}
+
+.cta-box::before {
+  content: '';
+  position: absolute;
+  width: 300px; height: 300px;
+  background: radial-gradient(circle, rgba(201,168,76,0.08), transparent);
+  top: -100px; right: -100px;
+}
+
+.cta-box h2 {
+  font-family: 'Playfair Display', serif;
+  font-size: 2.8rem;
+  font-weight: 900;
+  line-height: 1.2;
+  margin-bottom: 16px;
+}
+
+.cta-box h2 em { font-style: italic; color: var(--gold); }
+
+.cta-box p {
+  color: var(--muted);
+  margin-bottom: 40px;
+  font-size: 0.95rem;
+  line-height: 1.7;
+}
+
+/* ── FOOTER ── */
+footer {
+  padding: 48px 60px;
+  border-top: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 20px;
+}
+
+.footer-logo {
+  font-family: 'Playfair Display', serif;
+  font-size: 1.2rem;
+  color: var(--gold-light);
+}
+
+.footer-logo span { font-style: italic; color: var(--white); }
+
+.footer-copy {
+  font-size: 0.75rem;
+  color: var(--muted);
+}
+
+.footer-links {
+  display: flex;
+  gap: 24px;
+  list-style: none;
+}
+
+.footer-links a {
+  font-size: 0.75rem;
+  color: var(--muted);
+  text-decoration: none;
+  transition: color 0.2s;
+}
+
+.footer-links a:hover { color: var(--gold); }
+
+/* ── ANIMATIONS ── */
+@keyframes fadeup {
+  from { opacity: 0; transform: translateY(24px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.reveal {
+  opacity: 0;
+  transform: translateY(32px);
+  transition: opacity 0.7s ease, transform 0.7s ease;
+}
+
+.reveal.visible {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+/* ── RESPONSIVE ── */
+@media (max-width: 900px) {
+  nav { padding: 18px 24px; }
+  .nav-links { display: none; }
+  section { padding: 70px 24px; }
+  .stats-bar { padding: 0 24px; }
+  .features-grid, .pricing-grid { grid-template-columns: 1fr; }
+  .hiw-grid { grid-template-columns: 1fr; }
+  footer { padding: 40px 24px; flex-direction: column; align-items: flex-start; }
+  .mock-card { transform: none; }
+}
+</style>
+</head>
+<body>
+
+<canvas id="particles"></canvas>
+
+<!-- NAV -->
+<nav id="navbar">
+  <a href="#" class="nav-logo">Vote<span>Now</span></a>
+  <ul class="nav-links">
+    <li><a href="#features">Fonctionnalités</a></li>
+    <li><a href="#how">Comment ça marche</a></li>
+    <li><a href="#pricing">Tarifs</a></li>
+  </ul>
+  <a href="#" class="nav-cta">Créer un événement</a>
+</nav>
+
+<!-- HERO -->
+<section class="hero">
+  <div class="hero-glow"></div>
+  <div class="hero-line"></div>
+  <div class="hero-line"></div>
+  <div style="position:relative; z-index:2;">
+    <div class="hero-tag">Plateforme de vote en ligne — Cameroun</div>
+    <h1>
+      Votez pour<br>
+      <em>vos favoris</em>
+    </h1>
+    <p>La plateforme premium pour organiser vos concours Miss, Mister et tout événement de vote. Simple pour les organisateurs, fluide pour les votants.</p>
+    <div class="hero-btns">
+      <a href="#" class="btn-primary">Commencer gratuitement</a>
+      <a href="#how" class="btn-secondary">Voir comment ça marche</a>
+    </div>
+  </div>
+</section>
+
+<!-- STATS -->
+<div class="stats-bar">
+  <div class="stats-inner">
+    <div class="stat-item">
+      <span class="stat-num" data-count="1240">0</span>
+      <span class="stat-label">Votes traités</span>
+    </div>
+    <div class="stat-item">
+      <span class="stat-num" data-count="38">0</span>
+      <span class="stat-label">Événements créés</span>
+    </div>
+    <div class="stat-item">
+      <span class="stat-num" data-count="12">0</span>
+      <span class="stat-label">Organisateurs actifs</span>
+    </div>
+  </div>
+</div>
+
+<!-- FEATURES -->
+<section class="features-section" id="features">
+  <div style="max-width:1200px; margin:0 auto;">
+    <div>
+      <span class="section-label reveal">Fonctionnalités</span>
+      <h2 class="section-title reveal">Tout ce qu'il vous faut<br>pour <em>réussir</em> votre événement</h2>
+      <p class="section-sub reveal">De la création à la remise des prix — un outil unique, conçu pour l'Afrique.</p>
+    </div>
+    <div class="features-grid">
+      <div class="features-list">
+        <div class="feature-item reveal">
+          <div class="feature-icon">📱</div>
+          <div class="feature-text">
+            <h3>Paiement Mobile Money</h3>
+            <p>MTN MoMo, Orange Money et carte bancaire. Vos votants paient en 30 secondes depuis leur téléphone.</p>
+          </div>
+        </div>
+        <div class="feature-item reveal">
+          <div class="feature-icon">⚡</div>
+          <div class="feature-text">
+            <h3>Classement en temps réel</h3>
+            <p>Les scores se mettent à jour instantanément. Suspense garanti jusqu'à la dernière seconde.</p>
+          </div>
+        </div>
+        <div class="feature-item reveal">
+          <div class="feature-icon">🛡️</div>
+          <div class="feature-text">
+            <h3>Anti-fraude intégré</h3>
+            <p>Détection automatique des votes suspects. Résultats fiables et incontestables pour votre événement.</p>
+          </div>
+        </div>
+        <div class="feature-item reveal">
+          <div class="feature-icon">📊</div>
+          <div class="feature-text">
+            <h3>Dashboard analytique</h3>
+            <p>Suivez vos revenus, votes et performances en direct depuis votre tableau de bord organisateur.</p>
+          </div>
+        </div>
+      </div>
+      <!-- MOCK CARD -->
+      <div class="mock-card reveal">
+        <div class="mock-header">
+          <div class="mock-event-title">Miss Cameroun 2025</div>
+          <div class="mock-event-date">15 – 30 Mars 2025</div>
+          <div class="mock-live-badge">Live</div>
+        </div>
+        <div class="mock-candidates">
+          <div class="mock-candidate">
+            <div class="mock-avatar">👸</div>
+            <div class="mock-cname">Candidate #01</div>
+            <div class="mock-bar-wrap"><div class="mock-bar" style="width:72%"></div></div>
+            <div class="mock-pct">72%</div>
+          </div>
+          <div class="mock-candidate">
+            <div class="mock-avatar">💫</div>
+            <div class="mock-cname">Candidate #02</div>
+            <div class="mock-bar-wrap"><div class="mock-bar" style="width:55%"></div></div>
+            <div class="mock-pct">55%</div>
+          </div>
+          <div class="mock-candidate">
+            <div class="mock-avatar">🌟</div>
+            <div class="mock-cname">Candidate #03</div>
+            <div class="mock-bar-wrap"><div class="mock-bar" style="width:38%"></div></div>
+            <div class="mock-pct">38%</div>
+          </div>
+          <div class="mock-candidate">
+            <div class="mock-avatar">✨</div>
+            <div class="mock-cname">Candidate #04</div>
+            <div class="mock-bar-wrap"><div class="mock-bar" style="width:21%"></div></div>
+            <div class="mock-pct">21%</div>
+          </div>
+        </div>
+        <div class="mock-footer">
+          <span>1 vote = 100 FCFA</span>
+          <button class="mock-vote-btn">Voter maintenant</button>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- HOW IT WORKS -->
+<section id="how" class="hiw-section">
+  <span class="section-label reveal">Processus</span>
+  <h2 class="section-title reveal">3 étapes pour lancer<br><em>votre vote</em></h2>
+  <div class="hiw-grid">
+    <div class="hiw-item reveal">
+      <div class="hiw-number">01</div>
+      <h3>Créez votre événement</h3>
+      <p>Nommez votre concours, ajoutez les candidats avec leur photo, définissez le prix du vote et les dates.</p>
+    </div>
+    <div class="hiw-item reveal">
+      <div class="hiw-number">02</div>
+      <h3>Partagez le lien</h3>
+      <p>Un lien unique est généré. Partagez-le sur WhatsApp, Facebook ou tout autre réseau social.</p>
+    </div>
+    <div class="hiw-item reveal">
+      <div class="hiw-number">03</div>
+      <h3>Encaissez &amp; Gagnez</h3>
+      <p>Les votes arrivent, les paiements sont traités automatiquement. Retirez vos fonds en un clic.</p>
+    </div>
+  </div>
+</section>
+
+<!-- PRICING -->
+<section class="pricing-section" id="pricing">
+  <div style="text-align:center; max-width:600px; margin:0 auto;">
+    <span class="section-label reveal">Tarifs</span>
+    <h2 class="section-title reveal">Des plans adaptés<br>à <em>chaque événement</em></h2>
+  </div>
+  <div class="pricing-grid">
+    <div class="price-card reveal">
+      <span class="price-name">Starter</span>
+      <div class="price-amount"><sup>FCFA</sup>5 000</div>
+      <span class="price-period">par mois</span>
+      <ul class="price-features">
+        <li class="included">3 événements simultanés</li>
+        <li class="included">20 candidats max / événement</li>
+        <li class="included">Commission 20% sur les votes</li>
+        <li class="included">MTN MoMo + Orange Money</li>
+        <li>Analytics avancées</li>
+        <li>Personnalisation (logo)</li>
+      </ul>
+      <a href="#" class="btn-secondary" style="width:100%; text-align:center; display:block;">Choisir Starter</a>
+    </div>
+    <div class="price-card featured reveal">
+      <span class="price-name">Pro</span>
+      <div class="price-amount"><sup>FCFA</sup>15 000</div>
+      <span class="price-period">par mois</span>
+      <ul class="price-features">
+        <li class="included">Événements illimités</li>
+        <li class="included">Candidats illimités</li>
+        <li class="included">Commission 15% (réduite)</li>
+        <li class="included">Tous les moyens de paiement</li>
+        <li class="included">Analytics avancées</li>
+        <li class="included">Personnalisation complète</li>
+      </ul>
+      <a href="#" class="btn-primary" style="width:100%; text-align:center; display:block;">Choisir Pro</a>
+    </div>
+  </div>
+  <p style="text-align:center; color:var(--muted); font-size:0.78rem; margin-top:24px; max-width:500px; margin-left:auto; margin-right:auto;">
+    + 20% de commission prélevée automatiquement sur chaque vote payant. Aucun frais caché.
+  </p>
+</section>
+
+<!-- CTA -->
+<section class="cta-section">
+  <div class="cta-box reveal">
+    <h2>Prêt à lancer<br><em>votre concours ?</em></h2>
+    <p>Rejoignez les organisateurs qui font confiance à VoteNow pour leurs événements. Inscription gratuite, premier événement en 5 minutes.</p>
+    <a href="#" class="btn-primary">Créer mon compte gratuitement</a>
+  </div>
+</section>
+
+<!-- FOOTER -->
+<footer>
+  <div class="footer-logo">Vote<span>Now</span></div>
+  <p class="footer-copy">© 2025 VoteNow · Fait au Cameroun 🇨🇲</p>
+  <ul class="footer-links">
+    <li><a href="#">Conditions</a></li>
+    <li><a href="#">Confidentialité</a></li>
+    <li><a href="#">Contact</a></li>
+  </ul>
+</footer>
+
+<script>
+// ── PARTICLES ──
+const canvas = document.getElementById('particles');
+const ctx = canvas.getContext('2d');
+let W, H, particles = [];
+
+function resize() {
+  W = canvas.width = window.innerWidth;
+  H = canvas.height = window.innerHeight;
+}
+resize();
+window.addEventListener('resize', resize);
+
+for (let i = 0; i < 60; i++) {
+  particles.push({
+    x: Math.random() * window.innerWidth,
+    y: Math.random() * window.innerHeight,
+    r: Math.random() * 1.2 + 0.3,
+    vx: (Math.random() - 0.5) * 0.3,
+    vy: (Math.random() - 0.5) * 0.3,
+    alpha: Math.random() * 0.4 + 0.1
+  });
+}
+
+function drawParticles() {
+  ctx.clearRect(0, 0, W, H);
+  particles.forEach(p => {
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, p.r, 0, Math.PI * 2);
+    ctx.fillStyle = `rgba(201,168,76,${p.alpha})`;
+    ctx.fill();
+    p.x += p.vx; p.y += p.vy;
+    if (p.x < 0) p.x = W; if (p.x > W) p.x = 0;
+    if (p.y < 0) p.y = H; if (p.y > H) p.y = 0;
+  });
+  requestAnimationFrame(drawParticles);
+}
+drawParticles();
+
+// ── NAV SCROLL ──
+window.addEventListener('scroll', () => {
+  document.getElementById('navbar').classList.toggle('scrolled', window.scrollY > 40);
+});
+
+// ── COUNTER ANIMATION ──
+function animateCount(el, target) {
+  let current = 0;
+  const step = target / 60;
+  const timer = setInterval(() => {
+    current += step;
+    if (current >= target) { el.textContent = target.toLocaleString('fr'); clearInterval(timer); }
+    else el.textContent = Math.floor(current).toLocaleString('fr');
+  }, 20);
+}
+
+const observer = new IntersectionObserver(entries => {
+  entries.forEach(e => {
+    if (e.isIntersecting) {
+      const el = e.target;
+      animateCount(el, parseInt(el.dataset.count));
+      observer.unobserve(el);
+    }
+  });
+}, { threshold: 0.5 });
+
+document.querySelectorAll('[data-count]').forEach(el => observer.observe(el));
+
+// ── REVEAL ON SCROLL ──
+const revealObs = new IntersectionObserver(entries => {
+  entries.forEach(e => {
+    if (e.isIntersecting) {
+      e.target.classList.add('visible');
+    }
+  });
+}, { threshold: 0.12 });
+
+document.querySelectorAll('.reveal').forEach((el, i) => {
+  el.style.transitionDelay = `${(i % 4) * 0.1}s`;
+  revealObs.observe(el);
+});
+</script>
+</body>
+</html>
