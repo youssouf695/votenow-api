@@ -6,21 +6,30 @@ const sequelize = new Sequelize(
   process.env.DB_USER,
   process.env.DB_PASSWORD,
   {
-    host: process.env.DB_HOST || 'localhost',
-    port: process.env.DB_PORT || 5432,
+    host:    process.env.DB_HOST || 'localhost',
+    port:    process.env.DB_PORT || 5432,
     dialect: 'postgres',
     logging: process.env.NODE_ENV === 'development' ? console.log : false,
+
+    // ✅ SSL obligatoire sur Render / Supabase / tout hébergeur cloud
+    dialectOptions: process.env.DB_SSL === 'true' ? {
+      ssl: {
+        require: true,
+        rejectUnauthorized: false
+      }
+    } : {},
+
     define: {
-      timestamps: true,
+      timestamps:  true,
       underscored: true,
-      createdAt: 'created_at',
-      updatedAt: 'updated_at'
+      createdAt:   'created_at',
+      updatedAt:   'updated_at'
     },
     pool: {
-      max: 5,
-      min: 0,
+      max:     5,
+      min:     0,
       acquire: 30000,
-      idle: 10000
+      idle:    10000
     }
   }
 );
