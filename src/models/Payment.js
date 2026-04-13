@@ -3,7 +3,8 @@ const sequelize = require('../config/database');
 
 const Payment = sequelize.define('Payment', {
   id: {
-    type: DataTypes.STRING(100),
+    type: DataTypes.UUID,
+    defaultValue: DataTypes.UUIDV4,
     primaryKey: true
   },
   event_id: {
