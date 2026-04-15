@@ -13,7 +13,7 @@ const withdrawalRoutes = require('./routes/withdrawalRoutes');
 const adminRoutes = require('./routes/adminRoutes');
 const statsRoutes = require('./routes/statsRoutes');
 const subscriptionRoutes = require('./routes/subscriptionRoutes');
-
+const verificationRoutes = require('./routes/verificationRoutes'); // ← AJOUT
 
 const app = express();
 
@@ -27,7 +27,7 @@ app.use(morgan('dev'));
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-// Routes - UNE SEULE FOIS CHAQUE
+// Routes
 app.use('/api/auth', authRoutes);
 app.use('/api/events', eventRoutes);
 app.use('/api/payments', paymentRoutes);
@@ -36,6 +36,7 @@ app.use('/api/withdrawals', withdrawalRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api/stats', statsRoutes);
 app.use('/api/subscription-plans', subscriptionRoutes);
+app.use('/api/verifications', verificationRoutes); // ← AJOUT
 
 // Route de test
 app.get('/', (req, res) => {
@@ -49,7 +50,8 @@ app.get('/', (req, res) => {
       '/api/votes',
       '/api/withdrawals',
       '/api/admin',
-      '/api/stats'
+      '/api/stats',
+      '/api/verifications'
     ]
   });
 });
