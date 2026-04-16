@@ -223,7 +223,48 @@ exports.updateUser = async (req, res) => {
   }
 };
 
+exports.updateUser = async (req, res) => {
+  try {
+    const { userId } = req.params;
+    const { role, is_verified, balance_fcfa, full_name, email, phone, password } = req.body;
 
+    const user = await User.findByPk(userId);
+    if (!user) {
+      return res.status(404).json({ error: 'Utilisateur non trouvé' });
+    }
+
+    const updates = {};
+    if (role !== undefined) updates.role = role;
+    if (is_verified !== undefined) updates.is_verified = is_verified;
+    if (balance_fcfa !== undefined) updates.balance_fcfa = balance_fcfa;
+    if (full_name !== undefined) updates.full_name = full_name;
+    if (email !== undefined) updates.email = email;
+    if (phone !== undefined) updates.phone = phone;
+    
+    // Si un nouveau mot de passe est fourni, le hasher
+    if (password !== undefined && password.trim() !== '') {
+      const bcrypt = require('bcryptjs');
+      updates.password_hash = await bcrypt.hash(password, 10);
+    }
+
+    await user.update(updates);
+
+    res.json({
+      message: 'Utilisateur mis à jour avec succès',
+      user: {
+        id: user.id,
+        email: user.email,
+        full_name: user.full_name,
+        role: user.role,
+        is_verified: user.is_verified,
+        balance: user.balance_fcfa
+      }
+    });
+  } catch (error) {
+    console.error('Erreur updateUser:', error);
+    res.status(500).json({ error: error.message });
+  }
+};
 exports.deleteUser = async (req, res) => {
   const t = await sequelize.transaction();
 
