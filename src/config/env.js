@@ -18,7 +18,7 @@ module.exports = {
   },
   
   jwt: {
-    secret: process.env.JWT_SECRET || 'dev_jwt_secret_key_123',
+    secret: process.env.JWT_SECRET || 'ma_super_cle_secrete_123456',
     expire: process.env.JWT_EXPIRE || '7d'
   },
   

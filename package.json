@@ -13,7 +13,8 @@
   "type": "commonjs",
   "dependencies": {
     "@chipdeals/payments": "^1.1.0",
-    "axios": "^1.13.6",
+    "@getbrevo/brevo": "^5.0.4",
+    "axios": "^1.15.2",
     "bcryptjs": "^3.0.3",
     "cors": "^2.8.6",
     "dotenv": "^17.3.1",
@@ -23,7 +24,7 @@
     "json2csv": "^6.0.0-alpha.2",
     "jsonwebtoken": "^9.0.3",
     "morgan": "^1.10.1",
-    "nodemailer": "^8.0.5",
+    "nodemailer": "^8.0.6",
     "pg": "^8.20.0",
     "resend": "^6.11.0",
     "sequelize": "^6.37.7",

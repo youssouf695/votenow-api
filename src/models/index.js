@@ -6,7 +6,8 @@ const Vote = require('./Vote');
 const Withdrawal = require('./Withdrawal');
 const SubscriptionPlan = require('./SubscriptionPlan'); 
 const OrganizerSubscription = require('./OrganizerSubscription');
-const Commission = require('./Commission');  
+const Commission = require('./Commission'); 
+const LoginVerification = require('./LoginVerification') ;
 
 
 // ==================== ASSOCIATIONS ====================
@@ -177,6 +178,7 @@ User.hasMany(Commission, {
 });
 
 
+
 // ==================== EXPORTS ====================
 module.exports = {
   User,
@@ -187,5 +189,6 @@ module.exports = {
   Withdrawal,
   SubscriptionPlan,
   OrganizerSubscription,
-  Commission
+  Commission,
+  LoginVerification
 };

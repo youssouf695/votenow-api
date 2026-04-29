@@ -11,4 +11,7 @@ router.post('/verify-and-create', verificationController.verifyAndCreateAccount)
 router.post('/send', verificationController.sendVerificationCode);
 router.post('/verify', verificationController.verifyCode);
 
+// Routes pour la connexion avec OTP
+router.post('/request-login-code', verificationController.requestLoginCode);
+router.post('/verify-login-code', verificationController.verifyLoginCode);
 module.exports = router;
