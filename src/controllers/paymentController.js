@@ -7,16 +7,108 @@ const { v4: uuidv4 } = require('uuid');
 
 
 // ==================== 1. INITIER UN PAIEMENT ====================
+// exports.initiatePayment = async (req, res) => {
+//   try {
+//     const errors = validationResult(req);
+//     if (!errors.isEmpty()) {
+//       return res.status(400).json({ errors: errors.array() });
+//     }
+
+//     const { event_id, candidate_id, votes_count, voter_phone, voter_name } = req.body;
+
+//     // Vérifier que l'événement est actif
+//     const event = await Event.findOne({
+//       where: {
+//         id: event_id,
+//         status: 'active',
+//         ends_at: { [Op.gt]: new Date() }
+//       }
+//     });
+
+//     if (!event) {
+//       return res.status(404).json({ error: 'Événement non disponible ou terminé' });
+//     }
+
+//     // Vérifier que le candidat existe et est actif
+//     const candidate = await Candidate.findOne({
+//       where: { id: candidate_id, event_id, is_active: true }
+//     });
+
+//     if (!candidate) {
+//       return res.status(404).json({ error: 'Candidat non trouvé ou inactif' });
+//     }
+
+//     // Calculer les montants
+//     const amount = event.vote_price_fcfa * votes_count;
+//     const commissionAmt = Math.round(amount * (event.commission_rate / 100));
+//     const netToOrganizer = amount - commissionAmt;
+
+//     // Détecter la méthode selon le préfixe du numéro
+//     const method = detectMethod(voter_phone);
+
+//     // Générer une référence unique pour Flutterwave
+//     const tx_ref = uuidv4();
+//     const paymentId = uuidv4();
+
+//     // Créer la transaction en attente
+//     const payment = await Payment.create({
+//       id: paymentId,
+//       event_id,
+//       candidate_id,
+//       voter_phone,
+//       voter_name: voter_name || null,
+//       amount_fcfa: amount,
+//       votes_count,
+//       commission_amount: commissionAmt,
+//       net_to_organizer: netToOrganizer,
+//       method,
+//       status: 'pending',
+//       ip_address: req.ip,
+//       provider_ref: tx_ref  // Stocker la référence Flutterwave
+//     });
+
+//     // ── PRODUCTION : Flutterwave ─────────────────────────────
+//     try {
+//       const result = await flutterwaveService.initiatePayment({
+//         amount,
+//         email: `${voter_phone}@votenow.cm`,
+//         phoneNumber: voter_phone,
+//         fullName: voter_name || 'Votant',
+//         tx_ref,
+//         redirectUrl: `${process.env.FRONTEND_URL}/payment/status?payment_id=${paymentId}`
+//       });
+
+//       // La transaction a été initiée avec succès
+//       return res.json({
+//         payment_id: payment.id,
+//         tx_ref: result.tx_ref,
+//         payment_url: result.payment_link,
+//         amount,
+//         votes_count,
+//         candidate: candidate.name,
+//         status: 'pending',
+//         message: 'Redirection vers la page de paiement...'
+//       });
+
+//     } catch (flutterwaveError) {
+//       // En cas d'erreur, marquer le paiement comme échoué
+//       await payment.update({ status: 'failed' });
+//       console.error('❌ Erreur Flutterwave:', flutterwaveError);
+//       return res.status(400).json({ 
+//         error: flutterwaveError.message || 'Erreur lors de l\'initialisation du paiement' 
+//       });
+//     }
+
+//   } catch (error) {
+//     console.error('Erreur initiatePayment:', error.message);
+//     res.status(500).json({ error: error.message });
+//   }
+// };
 exports.initiatePayment = async (req, res) => {
   try {
-    const errors = validationResult(req);
-    if (!errors.isEmpty()) {
-      return res.status(400).json({ errors: errors.array() });
-    }
-
     const { event_id, candidate_id, votes_count, voter_phone, voter_name } = req.body;
 
-    // Vérifier que l'événement est actif
+    // Vérifier l'événement
     const event = await Event.findOne({
       where: {
         id: event_id,
@@ -26,16 +118,16 @@ exports.initiatePayment = async (req, res) => {
     });
 
     if (!event) {
-      return res.status(404).json({ error: 'Événement non disponible ou terminé' });
+      return res.status(404).json({ error: 'Événement non disponible' });
     }
 
-    // Vérifier que le candidat existe et est actif
+    // Vérifier le candidat
     const candidate = await Candidate.findOne({
       where: { id: candidate_id, event_id, is_active: true }
     });
 
     if (!candidate) {
-      return res.status(404).json({ error: 'Candidat non trouvé ou inactif' });
+      return res.status(404).json({ error: 'Candidat non trouvé' });
     }
 
     // Calculer les montants
@@ -43,16 +135,8 @@ exports.initiatePayment = async (req, res) => {
     const commissionAmt = Math.round(amount * (event.commission_rate / 100));
     const netToOrganizer = amount - commissionAmt;
 
-    // Détecter la méthode selon le préfixe du numéro
-    const method = detectMethod(voter_phone);
-
-    // Générer une référence unique pour Flutterwave
-    const tx_ref = uuidv4();
-    const paymentId = uuidv4();
-
-    // Créer la transaction en attente
+    // Créer le paiement en mode "attente"
     const payment = await Payment.create({
-      id: paymentId,
       event_id,
       candidate_id,
       voter_phone,
@@ -61,80 +145,132 @@ exports.initiatePayment = async (req, res) => {
       votes_count,
       commission_amount: commissionAmt,
       net_to_organizer: netToOrganizer,
-      method,
       status: 'pending',
-      ip_address: req.ip,
-      provider_ref: tx_ref  // Stocker la référence Flutterwave
+      ip_address: req.ip
     });
 
-    // ── PRODUCTION : Flutterwave ─────────────────────────────
-    try {
-      const result = await flutterwaveService.initiatePayment({
-        amount,
-        email: `${voter_phone}@votenow.cm`,
-        phoneNumber: voter_phone,
-        fullName: voter_name || 'Votant',
-        tx_ref,
-        redirectUrl: `${process.env.FRONTEND_URL}/payment/status?payment_id=${paymentId}`
-      });
+    // ✅ SIMULATION : traitement automatique après 2 secondes
+    setTimeout(async () => {
+      await exports.handleSuccessfulPayment(payment.id);
+    }, 2000);
 
-      // La transaction a été initiée avec succès
-      return res.json({
-        payment_id: payment.id,
-        tx_ref: result.tx_ref,
-        payment_url: result.payment_link,
-        amount,
-        votes_count,
-        candidate: candidate.name,
-        status: 'pending',
-        message: 'Redirection vers la page de paiement...'
-      });
-
-    } catch (flutterwaveError) {
-      // En cas d'erreur, marquer le paiement comme échoué
-      await payment.update({ status: 'failed' });
-      console.error('❌ Erreur Flutterwave:', flutterwaveError);
-      return res.status(400).json({ 
-        error: flutterwaveError.message || 'Erreur lors de l\'initialisation du paiement' 
-      });
-    }
+    // ✅ Réponse immédiate
+    res.json({
+      payment_id: payment.id,
+      amount,
+      votes_count,
+      candidate: candidate.name,
+      status: 'pending',
+      message: 'Vote en cours de traitement (simulation)'
+    });
 
   } catch (error) {
-    console.error('Erreur initiatePayment:', error.message);
+    console.error('Erreur initiatePayment:', error);
     res.status(500).json({ error: error.message });
   }
 };
 
 
 // ==================== 2. TRAITER UN PAIEMENT RÉUSSI ====================
+// exports.handleSuccessfulPayment = async (paymentId) => {
+//   const t = await sequelize.transaction();
+
+//   try {
+//     const payment = await Payment.findByPk(paymentId, {
+//       include: [
+//         { model: Event,     as: 'event' },
+//         { model: Candidate, as: 'candidate' }
+//       ],
+//       transaction: t
+//     });
+
+//     if (!payment) {
+//       await t.rollback();
+//       console.error(`❌ Payment ${paymentId} introuvable`);
+//       return;
+//     }
+
+//     if (payment.status !== 'pending') {
+//       await t.rollback();
+//       console.log(`⚠️ Payment ${paymentId} déjà traité (status: ${payment.status})`);
+//       return;
+//     }
+
+//     // 1. Marquer le paiement comme réussi
+//     await payment.update({ status: 'success' }, { transaction: t });
+
+//     // 2. Créer les votes en bulk
+//     const votesData = Array.from({ length: payment.votes_count }, () => ({
+//       payment_id: payment.id,
+//       candidate_id: payment.candidate_id,
+//       event_id: payment.event_id,
+//       quantity: 1,
+//       ip_address: payment.ip_address
+//     }));
+//     await Vote.bulkCreate(votesData, { transaction: t });
+
+//     // 3. Incrémenter le compteur du candidat
+//     await Candidate.increment(
+//       { vote_count: payment.votes_count },
+//       { where: { id: payment.candidate_id }, transaction: t }
+//     );
+
+//     // 4. Mettre à jour les totaux de l'événement
+//     await Event.increment(
+//       {
+//         total_votes: payment.votes_count,
+//         total_collected: payment.amount_fcfa
+//       },
+//       { where: { id: payment.event_id }, transaction: t }
+//     );
+
+//     // 5. Créditer le solde de l'organisateur
+//     await User.increment(
+//       { balance_fcfa: payment.net_to_organizer },
+//       { where: { id: payment.event.organizer_id }, transaction: t }
+//     );
+
+//     // 6. Enregistrer la commission
+//     await Commission.create({
+//       payment_id: payment.id,
+//       event_id: payment.event_id,
+//       organizer_id: payment.event.organizer_id,
+//       amount_fcfa: payment.commission_amount,
+//       rate_applied: payment.event.commission_rate,
+//       base_amount: payment.amount_fcfa,
+//       status: 'pending'
+//     }, { transaction: t });
+
+//     await t.commit();
+//     console.log(`✅ Paiement ${paymentId} traité — ${payment.votes_count} votes pour ${payment.candidate?.name}`);
+
+//   } catch (error) {
+//     await t.rollback();
+//     console.error(`❌ Erreur traitement paiement ${paymentId}:`, error.message);
+//   }
+// };
+
 exports.handleSuccessfulPayment = async (paymentId) => {
   const t = await sequelize.transaction();
 
   try {
     const payment = await Payment.findByPk(paymentId, {
       include: [
-        { model: Event,     as: 'event' },
+        { model: Event, as: 'event' },
         { model: Candidate, as: 'candidate' }
       ],
       transaction: t
     });
 
-    if (!payment) {
+    if (!payment || payment.status !== 'pending') {
       await t.rollback();
-      console.error(`❌ Payment ${paymentId} introuvable`);
-      return;
-    }
-
-    if (payment.status !== 'pending') {
-      await t.rollback();
-      console.log(`⚠️ Payment ${paymentId} déjà traité (status: ${payment.status})`);
       return;
     }
 
     // 1. Marquer le paiement comme réussi
     await payment.update({ status: 'success' }, { transaction: t });
 
-    // 2. Créer les votes en bulk
+    // 2. Créer les votes
     const votesData = Array.from({ length: payment.votes_count }, () => ({
       payment_id: payment.id,
       candidate_id: payment.candidate_id,
@@ -159,7 +295,7 @@ exports.handleSuccessfulPayment = async (paymentId) => {
       { where: { id: payment.event_id }, transaction: t }
     );
 
-    // 5. Créditer le solde de l'organisateur
+    // 5. Créditer l'organisateur
     await User.increment(
       { balance_fcfa: payment.net_to_organizer },
       { where: { id: payment.event.organizer_id }, transaction: t }
@@ -177,14 +313,13 @@ exports.handleSuccessfulPayment = async (paymentId) => {
     }, { transaction: t });
 
     await t.commit();
-    console.log(`✅ Paiement ${paymentId} traité — ${payment.votes_count} votes pour ${payment.candidate?.name}`);
+    console.log(`✅ Vote enregistré : ${payment.votes_count} votes pour ${payment.candidate.name}`);
 
   } catch (error) {
     await t.rollback();
-    console.error(`❌ Erreur traitement paiement ${paymentId}:`, error.message);
+    console.error('Erreur traitement vote:', error);
   }
 };
-
 
 // ==================== 3. VÉRIFICATION APRÈS REDIRECTION (sans webhook) ====================
 exports.verifyPaymentAfterRedirect = async (req, res) => {
