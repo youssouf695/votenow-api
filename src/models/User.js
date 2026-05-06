@@ -42,13 +42,6 @@ const User = sequelize.define('User', {
   }
 }, {
   tableName: 'users',
-  hooks: {
-    beforeCreate: async (user) => {
-      if (user.password_hash) {
-        user.password_hash = await bcrypt.hash(user.password_hash, 10);
-      }
-    }
-  }
 });
 
 User.prototype.validatePassword = async function(password) {

@@ -2,7 +2,6 @@ const { Payment, Event, Candidate, Vote, User, Commission } = require('../models
 const sequelize = require('../config/database');
 const { validationResult } = require('express-validator');
 const { Op } = require('sequelize');
-const flutterwaveService = require('../services/flutterwave'); // ← Changé
 const { v4: uuidv4 } = require('uuid');
 
 

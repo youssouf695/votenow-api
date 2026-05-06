@@ -1,6 +1,5 @@
 const { User, Verification } = require('../models');
 const { sendVerificationEmail } = require('../services/email');
-const { sendVerificationWhatsApp } = require('../services/whatsapp');
 const { Op } = require('sequelize');
 const jwt = require('jsonwebtoken');
 const env = require('../config/env');
@@ -96,15 +95,16 @@ exports.verifyAndCreateAccount = async (req, res) => {
     const { full_name, phone, organization_name, website, password } = pending.data;
 
     // Créer l'utilisateur directement vérifié
+    const bcrypt = require('bcryptjs');
+    const hashedPassword = await bcrypt.hash(password, 10);
+    
     const user = await User.create({
       email,
       phone,
       full_name,
-      password_hash: password,
+      password_hash: hashedPassword, 
       role: 'organizer',
       is_verified: true,
-      organization_name: organization_name || null,
-      website: website || null
     });
 
     // Nettoyer le stockage temporaire
