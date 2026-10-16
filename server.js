@@ -1,6 +1,10 @@
 const app = require('./src/app');
 const sequelize = require('./src/config/database');
 const env = require('./src/config/env');
+const {
+  initializeRateLimits,
+  cleanExpiredRateLimits
+} = require('./src/middleware/rateLimit');
 
 const PORT = env.port;
 process.on('uncaughtException', (err) => {
@@ -23,6 +27,17 @@ async function startServer() {
     await sequelize.sync({ alter: true });
     console.log('Modèles synchronisés');
     
+    await initializeRateLimits();
+    await cleanExpiredRateLimits();
+
+    const cleanupTimer = setInterval(() => {
+      cleanExpiredRateLimits().catch(error => {
+        console.error('Nettoyage des limites :', error.message);
+      });
+    }, 15 * 60 * 1000);
+
+    cleanupTimer.unref();
+
     const server = app.listen(PORT, () => {
       console.log(`🚀 Serveur sur http://localhost:${PORT}`);
     });

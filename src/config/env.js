@@ -18,10 +18,10 @@ module.exports = {
   },
   
   jwt: {
-    secret: process.env.JWT_SECRET || 'ma_super_cle_secrete_123456',
+    secret: process.env.JWT_SECRET || '',
     expire: process.env.JWT_EXPIRE || '7d'
   },
   
-  adminEmail: process.env.ADMIN_EMAIL || 'admin@local.com',
-  adminPassword: process.env.ADMIN_PASSWORD || 'Admin123!'
+  adminEmail: process.env.ADMIN_EMAIL,
+  adminPassword: process.env.ADMIN_PASSWORD
 };

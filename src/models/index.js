@@ -8,7 +8,7 @@ const SubscriptionPlan = require('./SubscriptionPlan');
 const OrganizerSubscription = require('./OrganizerSubscription');
 const Commission = require('./Commission'); 
 const LoginVerification = require('./LoginVerification') ;
-
+const Verification = require('./Verification');
 
 // ==================== ASSOCIATIONS ====================
 
@@ -190,5 +190,6 @@ module.exports = {
   SubscriptionPlan,
   OrganizerSubscription,
   Commission,
-  LoginVerification
+  LoginVerification,
+  Verification
 };
