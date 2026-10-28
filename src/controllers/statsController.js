@@ -22,9 +22,9 @@ exports.getEventAnalytics = async (req, res) => {
       raw: true
     });
 
-    const totalVotes     = payments.reduce((sum, p) => sum + p.votes_count, 0);
-    const totalCollected = payments.reduce((sum, p) => sum + p.amount_fcfa, 0);
-    const totalCommission = payments.reduce((sum, p) => sum + p.commission_amount, 0);
+    const totalVotes     = payments.reduce((sum, p) => sum + Number(p.votes_count || 0), 0);
+    const totalCollected = payments.reduce((sum, p) => sum + Number(p.amount_fcfa || 0), 0);
+    const totalCommission = payments.reduce((sum, p) => sum + Number(p.commission_amount || 0), 0);
     const uniqueVoters   = new Set(payments.map(p => p.voter_phone)).size;
 
     // 2. Répartition par méthode de paiement
@@ -50,7 +50,7 @@ exports.getEventAnalytics = async (req, res) => {
       },
       attributes: [
         [sequelize.fn('DATE_TRUNC', 'hour', sequelize.col('Vote.created_at')), 'hour'],
-        [sequelize.fn('COUNT', sequelize.col('Vote.id')), 'votes']         // ✅
+        [sequelize.fn('SUM', sequelize.col('Vote.quantity')), 'votes']         // ✅
       ],
       group: [sequelize.fn('DATE_TRUNC', 'hour', sequelize.col('Vote.created_at'))],
       order: [[sequelize.fn('DATE_TRUNC', 'hour', sequelize.col('Vote.created_at')), 'ASC']],
@@ -155,3 +155,4 @@ exports.getRevenueReport = async (req, res) => {
     res.status(500).json({ error: error.message });
   }
 };
+

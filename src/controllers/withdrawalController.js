@@ -6,120 +6,33 @@ const { Op } = require('sequelize');
 
 // ==================== 1. DEMANDER UN RETRAIT ====================
 exports.requestWithdrawal = async (req, res) => {
-  const t = await sequelize.transaction();
-
   try {
     const errors = validationResult(req);
-    if (!errors.isEmpty()) {
-      await t.rollback();
-      return res.status(400).json({ errors: errors.array() });
-    }
-
-    const {
-      amount,
-      method,
-      destination_phone,
-      event_id,
-      destination_account,
-      destination_name,
-      bank_name
-    } = req.body;
-
-    // Compte vérifié ?
-    if (!req.user.is_verified) {
-      await t.rollback();
-      return res.status(403).json({
-        error: 'Compte non vérifié. Vérifiez votre compte avant de faire un retrait.'
-      });
-    }
-
-    // Solde suffisant ?
-    if (req.user.balance_fcfa < amount) {
-      await t.rollback();
-      return res.status(400).json({
-        error: 'Solde insuffisant',
-        balance: req.user.balance_fcfa,
-        requested: amount
-      });
-    }
-
-    // Montant minimum par méthode
-    const minAmounts = { mtn_momo: 500, orange_money: 500, bank: 5000 };
-    if (amount < minAmounts[method]) {
-      await t.rollback();
-      return res.status(400).json({
-        error: `Montant minimum pour ${method} : ${minAmounts[method]} FCFA`
-      });
-    }
-
-    // Pas de demande déjà en cours
-    const existingPending = await Withdrawal.findOne({
-      where: {
-        organizer_id: req.user.id,
-        status: { [Op.in]: ['pending', 'processing'] }
+    if (!errors.isEmpty()) return res.status(400).json({ errors: errors.array() });
+    const { integer, normalizePhone } = require('../services/kpayAmounts');
+    const amount = integer(req.body.amount);
+    const method = req.body.method;
+    if (!['mtn_momo', 'orange_money'].includes(method)) return res.status(422).json({ error: 'Choisissez MTN Mobile Money ou Orange Money.' });
+    if (amount < 500 || amount > 10000000) return res.status(400).json({ error: 'Montant de retrait invalide (500 à 10 000 000 FCFA).' });
+    const phone = normalizePhone(req.body.destination_phone);
+    const result = await sequelize.transaction(async transaction => {
+      const user = await User.findByPk(req.user.id, { transaction, lock: transaction.LOCK.UPDATE });
+      if (!user?.is_verified) throw Object.assign(new Error('Compte non vérifié'), { status: 403 });
+      if (user.balance_fcfa < amount) throw Object.assign(new Error('Solde insuffisant'), { status: 400 });
+      const pending = await Withdrawal.findOne({ where: { organizer_id: user.id, status: { [Op.in]: ['pending', 'processing'] } }, transaction });
+      if (pending) throw Object.assign(new Error('Vous avez déjà une demande en cours.'), { status: 409 });
+      if (req.body.event_id) {
+        const event = await Event.findOne({ where: { id: req.body.event_id, organizer_id: user.id }, transaction });
+        if (!event) throw Object.assign(new Error('Événement non trouvé'), { status: 404 });
       }
+      await User.decrement({ balance_fcfa: amount }, { where: { id: user.id }, transaction });
+      const withdrawal = await Withdrawal.create({ organizer_id: user.id, event_id: req.body.event_id || null,
+        amount_fcfa: amount, method, destination_phone: phone, status: 'pending' }, { transaction });
+      return { withdrawal, new_balance: user.balance_fcfa - amount };
     });
-
-    if (existingPending) {
-      await t.rollback();
-      return res.status(400).json({
-        error: 'Vous avez déjà une demande de retrait en cours de traitement'
-      });
-    }
-
-    // Vérifier l'événement si spécifié
-    if (event_id) {
-      const event = await Event.findOne({
-        where: { id: event_id, organizer_id: req.user.id }
-      });
-      if (!event) {
-        await t.rollback();
-        return res.status(404).json({ error: 'Événement non trouvé' });
-      }
-    }
-
-    // Bloquer le montant (éviter double dépense)
-    await User.decrement(
-      { balance_fcfa: amount },
-      { where: { id: req.user.id }, transaction: t }
-    );
-
-    // Créer la demande
-    const withdrawal = await Withdrawal.create({
-      organizer_id: req.user.id,
-      event_id: event_id || null,
-      amount_fcfa: amount,
-      method,
-      destination_phone,
-      destination_account: destination_account || null,
-      destination_name: destination_name || null,
-      bank_name: bank_name || null,
-      status: 'pending'
-    }, { transaction: t });
-
-    await t.commit();
-
-    res.status(201).json({
-      message: 'Demande de retrait envoyée avec succès',
-      withdrawal: {
-        id: withdrawal.id,
-        amount_fcfa: withdrawal.amount_fcfa,
-        method: withdrawal.method,
-        destination_phone: withdrawal.destination_phone,
-        status: withdrawal.status,
-        requested_at: withdrawal.requested_at,
-        estimated_processing: '24-48h'
-      },
-      new_balance: req.user.balance_fcfa - amount
-    });
-
-  } catch (error) {
-    await t.rollback();
-    console.error('Erreur requestWithdrawal:', error.message);
-    res.status(500).json({ error: error.message });
-  }
+    return res.status(201).json({ message: 'Demande de retrait enregistrée', ...result });
+  } catch (error) { return res.status(error.status || 500).json({ error: error.status ? error.message : 'Demande non enregistrée' }); }
 };
-
 
 // ==================== 2. HISTORIQUE DES RETRAITS ====================
 exports.getMyWithdrawals = async (req, res) => {
@@ -209,49 +122,18 @@ exports.getWithdrawalDetails = async (req, res) => {
 
 // ==================== 4. ANNULER UNE DEMANDE ====================
 exports.cancelWithdrawal = async (req, res) => {
-  const t = await sequelize.transaction();
-
   try {
-    const { id } = req.params;
-
-    const withdrawal = await Withdrawal.findOne({
-      where: {
-        id,
-        organizer_id: req.user.id,
-        status: 'pending'       // On ne peut annuler que si encore pending
-      }
+    const result = await sequelize.transaction(async transaction => {
+      const withdrawal = await Withdrawal.findOne({ where: { id: req.params.id, organizer_id: req.user.id }, transaction, lock: transaction.LOCK.UPDATE });
+      if (!withdrawal || withdrawal.status !== 'pending') throw Object.assign(new Error('Demande déjà traitée ou introuvable'), { status: 409 });
+      await User.increment({ balance_fcfa: withdrawal.amount_fcfa }, { where: { id: req.user.id }, transaction });
+      await withdrawal.update({ status: 'cancelled', completed_at: new Date() }, { transaction });
+      const user = await User.findByPk(req.user.id, { transaction });
+      return { new_balance: user.balance_fcfa };
     });
-
-    if (!withdrawal) {
-      await t.rollback();
-      return res.status(404).json({ error: 'Demande non trouvée ou déjà traitée' });
-    }
-
-    // Rembourser le solde
-    await User.increment(
-      { balance_fcfa: withdrawal.amount_fcfa },
-      { where: { id: req.user.id }, transaction: t }
-    );
-
-    await withdrawal.update({
-      status: 'cancelled',
-      completed_at: new Date()
-    }, { transaction: t });
-
-    await t.commit();
-
-    res.json({
-      message: 'Demande annulée avec succès',
-      new_balance: req.user.balance_fcfa + withdrawal.amount_fcfa
-    });
-
-  } catch (error) {
-    await t.rollback();
-    console.error('Erreur cancelWithdrawal:', error.message);
-    res.status(500).json({ error: error.message });
-  }
+    return res.json({ message: 'Demande annulée', ...result });
+  } catch (error) { return res.status(error.status || 500).json({ error: error.status ? error.message : 'Annulation indisponible' }); }
 };
-
 
 // ==================== 5. STATISTIQUES MENSUELLES ====================
 exports.getWithdrawalStats = async (req, res) => {
@@ -282,3 +164,4 @@ exports.getWithdrawalStats = async (req, res) => {
     res.status(500).json({ error: error.message });
   }
 };
+

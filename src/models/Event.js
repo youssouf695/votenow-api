@@ -64,7 +64,7 @@ const Event = sequelize.define('Event', {
   commission_rate: {
     type: DataTypes.DECIMAL(5, 2),
     allowNull: false,
-    defaultValue: 20.00,
+    defaultValue: 15.00,
     validate: {
       min: 0,
       max: 50
@@ -124,3 +124,4 @@ const Event = sequelize.define('Event', {
 });
 
 module.exports = Event;
+

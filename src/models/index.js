@@ -1,3 +1,4 @@
+const KpayOperation = require('./KpayOperation');
 const User = require('./User');
 const Event = require('./Event');
 const Candidate = require('./Candidate');
@@ -181,6 +182,7 @@ User.hasMany(Commission, {
 
 // ==================== EXPORTS ====================
 module.exports = {
+  KpayOperation,
   User,
   Event,
   Candidate,
@@ -193,3 +195,4 @@ module.exports = {
   LoginVerification,
   Verification
 };
+

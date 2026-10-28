@@ -5,11 +5,12 @@ const { auth } = require('../middleware/auth');
 
 const router = express.Router();
 
-// Webhook Chipdeals (public)
-router.post('/webhook', paymentController.handleWebhook);
+// Le webhook KPay est enregistré dans app.js avant express.json.
 
 // Routes publiques
 router.post('/initiate', [
+  body('expected_amount').isInt({ min: 50, max: 1000000 }),
+  body('request_id').isUUID().withMessage('Identifiant de tentative requis'),
   body('event_id').isUUID(),
   body('candidate_id').isUUID(),
   body('votes_count').isInt({ min: 1, max: 100 }),
@@ -23,7 +24,11 @@ router.get('/status/:paymentId', [
 
 // Routes protégées
 router.get('/event/:eventId', [
-  param('eventId').isUUID()
+  param('eventId').isUUID(),
+  query('page').optional().isInt({ min: 1 }),
+  query('limit').optional().isInt({ min: 1, max: 100 }),
+  query('status').optional().isIn(['pending', 'success', 'failed', 'refunded'])
 ], auth, paymentController.getEventPayments);
 
 module.exports = router;
+

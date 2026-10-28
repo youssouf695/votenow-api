@@ -24,8 +24,8 @@ async function startServer() {
     await sequelize.authenticate();
     console.log('Connexion à PostgreSQL établie');
     
-    await sequelize.sync({ alter: true });
-    console.log('Modèles synchronisés');
+    // Les changements de schéma doivent être appliqués séparément.
+    // Ne pas modifier les tables métier à chaque démarrage.
     
     await initializeRateLimits();
     await cleanExpiredRateLimits();
@@ -53,3 +53,4 @@ async function startServer() {
 }
 
 startServer();
+

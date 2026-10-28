@@ -46,6 +46,7 @@ const Payment = sequelize.define('Payment', {
     type: DataTypes.INTEGER,
     allowNull: false
   },
+  commission_rate_applied: { type: DataTypes.DECIMAL(5, 2), allowNull: true },
   method: {
     type: DataTypes.ENUM('mtn_momo', 'orange_money', 'card'),
     allowNull: true
@@ -80,3 +81,4 @@ const Payment = sequelize.define('Payment', {
 });
 
 module.exports = Payment;
+

@@ -44,7 +44,7 @@ exports.createEvent = async (req, res) => {
       description:     description     || null,
       vote_price_fcfa: vote_price_fcfa || 200,
       votes_per_payment: votes_per_payment || 1,
-      commission_rate: 20.00,
+      commission_rate: 15.00,
       max_candidates:  max_candidates  || null,
       allow_anonymous: allow_anonymous !== undefined ? allow_anonymous : true,
       show_results:    show_results    !== undefined ? show_results    : true,
@@ -129,6 +129,7 @@ exports.getMyEvents = async (req, res) => {
 
     const events = await Event.findAndCountAll({
       where,
+      distinct: true,
       include: [{
         model: Candidate,
         as: 'candidates',      // ✅ alias correct
@@ -537,3 +538,6 @@ exports.getEventRanking = async (req, res) => {
     res.status(500).json({ error: error.message });
   }
 };
+
+
+

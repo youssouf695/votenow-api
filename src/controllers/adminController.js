@@ -426,74 +426,48 @@ exports.getWithdrawals = async (req, res) => {
 
 
 exports.processWithdrawal = async (req, res) => {
-  const t = await sequelize.transaction();
-
+  const { KpayOperation } = require('../models');
+  const { payoutQuote, dispatch, hash, failure } = require('../services/kpayOperations');
+  const { normalizePhone } = require('../services/kpayAmounts');
+  const { getConfig } = require('../config/kpay');
   try {
-    const { withdrawalId } = req.params;
-    const { action, rejection_reason, transaction_ref } = req.body;
-
-    if (!['approve', 'reject'].includes(action)) {
-      await t.rollback();
-      return res.status(400).json({ error: 'Action invalide — approve ou reject' });
-    }
-
-    const withdrawal = await Withdrawal.findByPk(withdrawalId, {
-      include: [{
-        model: User,
-        as: 'organizer',
-        attributes: ['id', 'balance_fcfa']
-      }],
-      transaction: t
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) return res.status(400).json({ errors: errors.array() });
+    const { action, rejection_reason } = req.body;
+    if (!['approve', 'reject'].includes(action)) throw failure('Action invalide');
+    const snapshot = await Withdrawal.findByPk(req.params.withdrawalId);
+    if (!snapshot) throw failure('Demande introuvable', 404);
+    // Une seconde approbation ne déclenche jamais un second transfert.
+    if (action === 'approve' && snapshot.status === 'processing') return res.json({ message: 'Transfert déjà en cours de vérification.', withdrawal: snapshot });
+    if (snapshot.status !== 'pending') throw failure('Demande déjà traitée', 409);
+    const config = action === 'approve' ? getConfig() : null;
+    const quote = action === 'approve' ? await payoutQuote(snapshot) : null;
+    const operationId = await sequelize.transaction(async transaction => {
+      const withdrawal = await Withdrawal.findByPk(snapshot.id, { transaction, lock: transaction.LOCK.UPDATE });
+      if (withdrawal.status !== 'pending') throw failure('Demande déjà traitée', 409);
+      if (withdrawal.amount_fcfa !== snapshot.amount_fcfa || withdrawal.method !== snapshot.method || withdrawal.destination_phone !== snapshot.destination_phone) throw failure('Demande modifiée. Actualisez.', 409);
+      if (action === 'reject') {
+        await User.increment({ balance_fcfa: withdrawal.amount_fcfa }, { where: { id: withdrawal.organizer_id }, transaction });
+        await withdrawal.update({ status: 'rejected', processed_by: req.user.id, processed_at: new Date(), rejection_reason: rejection_reason || 'Demande rejetée par l’administrateur' }, { transaction });
+        return null;
+      }
+      const externalId = `vn-w-${withdrawal.id}`;
+      const phone = normalizePhone(withdrawal.destination_phone);
+      const provider = { mtn_momo: 'MTN_MOMO_CMR', orange_money: 'ORANGE_CMR' }[withdrawal.method];
+      const operation = await KpayOperation.create({ kind: 'PAYOUT', domain_id: withdrawal.id, request_key: withdrawal.id,
+        external_id: externalId, fingerprint: hash([withdrawal.id, withdrawal.amount_fcfa, phone, provider]),
+        environment: config.mode, status: 'CREATED', expected_amount: quote.gross, target_net: withdrawal.amount_fcfa, pricing_snapshot: quote,
+        request_payload: { amount: quote.gross, provider, phoneNumber: phone, sourceCountry: 'CMR', externalId,
+          description: 'Reversement VoteNow', metadata: { withdrawalId: withdrawal.id } },
+      }, { transaction });
+      await withdrawal.update({ status: 'processing', processed_by: req.user.id, processed_at: new Date() }, { transaction });
+      return operation.id;
     });
-
-    if (!withdrawal) {
-      await t.rollback();
-      return res.status(404).json({ error: 'Demande de retrait non trouvée' });
-    }
-
-    if (withdrawal.status !== 'pending') {
-      await t.rollback();
-      return res.status(400).json({ error: `Demande déjà traitée (status: ${withdrawal.status})` });
-    }
-
-    if (action === 'approve') {
-      await withdrawal.update({
-        status:          'done',
-        processed_by:    req.user.id,
-        processed_at:    new Date(),
-        completed_at:    new Date(),
-        transaction_ref: transaction_ref || null
-      }, { transaction: t });
-
-    } else {
-      // Rejeter → rembourser le solde
-      await User.increment(
-        { balance_fcfa: withdrawal.amount_fcfa },
-        { where: { id: withdrawal.organizer_id }, transaction: t }
-      );
-
-      await withdrawal.update({
-        status:            'rejected',
-        processed_by:      req.user.id,
-        processed_at:      new Date(),
-        rejection_reason:  rejection_reason || 'Demande rejetée par l\'administrateur'
-      }, { transaction: t });
-    }
-
-    await t.commit();
-
-    res.json({
-      message:    `Retrait ${action === 'approve' ? 'approuvé' : 'rejeté'} avec succès`,
-      withdrawal
-    });
-
-  } catch (error) {
-    await t.rollback();
-    console.error('Erreur processWithdrawal:', error.message);
-    res.status(500).json({ error: error.message });
-  }
+    if (operationId) await dispatch(operationId);
+    const withdrawal = await Withdrawal.findByPk(snapshot.id);
+    return res.json({ message: action === 'reject' ? 'Demande rejetée. Montant restitué.' : withdrawal.status === 'done' ? 'Retrait confirmé.' : withdrawal.status === 'rejected' ? 'Transfert refusé. Montant restitué.' : 'Demande transmise. Confirmation en attente.', withdrawal });
+  } catch (error) { return res.status(error.status || 503).json({ error: error.status ? error.message : 'Traitement indisponible. Actualisez avant toute nouvelle action.' }); }
 };
-
 
 // ==================== STATISTIQUES GLOBALES ====================
 
@@ -560,3 +534,4 @@ exports.getPlatformStats = async (req, res) => {
     res.status(500).json({ error: error.message });
   }
 };
+

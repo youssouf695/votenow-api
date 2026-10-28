@@ -1,0 +1,25 @@
+const { DataTypes } = require('sequelize');
+const sequelize = require('../config/database');
+module.exports = sequelize.define('KpayOperation', {
+  id: { type: DataTypes.UUID, primaryKey: true, defaultValue: DataTypes.UUIDV4 },
+  kind: { type: DataTypes.STRING(12), allowNull: false },
+  domain_id: { type: DataTypes.UUID, allowNull: false },
+  request_key: { type: DataTypes.UUID, allowNull: false, unique: true },
+  external_id: { type: DataTypes.STRING(100), allowNull: false, unique: true },
+  fingerprint: { type: DataTypes.STRING(64), allowNull: false },
+  environment: { type: DataTypes.STRING(12), allowNull: false },
+  status: { type: DataTypes.STRING(32), allowNull: false, defaultValue: 'CREATED' },
+  expected_amount: { type: DataTypes.INTEGER, allowNull: false },
+  target_net: { type: DataTypes.INTEGER, allowNull: true },
+  provider_id: { type: DataTypes.STRING(100), unique: true },
+  provider_reference: { type: DataTypes.STRING(100) },
+  request_payload: { type: DataTypes.JSONB, allowNull: false },
+  provider_fee: { type: DataTypes.DECIMAL(18, 4) },
+  provider_net: { type: DataTypes.DECIMAL(18, 4) },
+  pricing_snapshot: { type: DataTypes.JSONB },
+  last_event: { type: DataTypes.JSONB },
+  error_code: { type: DataTypes.STRING(64) },
+  started_at: { type: DataTypes.DATE },
+  completed_at: { type: DataTypes.DATE },
+}, { tableName: 'kpay_operations', timestamps: true, underscored: true,
+  indexes: [{ unique: true, fields: ['kind', 'domain_id'] }, { fields: ['status', 'created_at'] }] });

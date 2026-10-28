@@ -24,8 +24,8 @@ app.use(cors({
   credentials: true
 }));
 app.use(morgan('dev'));
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
+// Notification serveur KPay : corps brut indispensable au HMAC.
+app.post('/api/payments/webhook', express.raw({ type: 'application/json', limit: '100kb' }), require('./controllers/kpayWebhookController').handleWebhook);
 app.use(express.json({ limit: '100kb' }));
 app.use(express.urlencoded({
   extended: true,
@@ -64,3 +64,6 @@ app.get('/', (req, res) => {
 });
 
 module.exports = app;
+
+
+

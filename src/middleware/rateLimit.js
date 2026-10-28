@@ -1,5 +1,6 @@
 const { createHash } = require('node:crypto');
 const sequelize = require('../config/database');
+const { resolveLoginUser, normalizeIdentifier } = require('../utils/loginIdentity');
 
 async function initializeRateLimits() {
   await sequelize.query(`
@@ -19,7 +20,7 @@ async function initializeRateLimits() {
 function rateLimit({ scope, limit, seconds, identify }) {
   return async (req, res, next) => {
     try {
-      const identity = identify(req);
+      const identity = await identify(req);
 
       if (!identity) {
         return res.status(400).json({
@@ -72,7 +73,7 @@ function rateLimit({ scope, limit, seconds, identify }) {
         });
       }
 
-      next();
+      return next();
     } catch (error) {
       console.error('Erreur limitation des requêtes :', error.message);
 
@@ -84,16 +85,24 @@ function rateLimit({ scope, limit, seconds, identify }) {
   };
 }
 
-// Les contrôleurs actuels utilisent "email" comme identifiant.
-function accountIdentifier(req) {
-  const value = req.body?.email;
-
-  if (typeof value !== 'string') return null;
-
-  const normalized = value.trim().toLowerCase();
-
-  return normalized && normalized.length <= 255
-    ? normalized
+// Email et téléphone d'un même compte utilisent les mêmes compteurs.
+async function accountIdentifier(req) {
+  const loginPaths = [
+    '/auth/login', '/auth/request-login-code', '/auth/verify-login-code',
+    '/verifications/request-login-code', '/verifications/verify-login-code'
+  ];
+  const path = req.path.replace(/\/+$/, '').toLowerCase();
+  if (loginPaths.includes(path)) {
+    const identity = normalizeIdentifier(req.body?.email);
+    if (!identity) return null;
+    const user = await resolveLoginUser(req);
+    return user
+      ? user.email.trim().toLowerCase()
+      : `${identity.type}:${identity.value}`;
+  }
+  const email = req.body?.email;
+  return typeof email === 'string' && email.trim() && email.trim().length <= 255
+    ? email.trim().toLowerCase()
     : null;
 }
 
@@ -187,3 +196,4 @@ module.exports = {
   protectSensitiveActions,
   cleanExpiredRateLimits
 };
+
