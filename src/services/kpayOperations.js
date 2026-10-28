@@ -116,7 +116,16 @@ async function dispatch(operationId) {
   let result;
   try {
     result = operation.kind === 'DEPOSIT' ? await client.initiatePayment(operation.request_payload) : await client.initiateWithdrawal(operation.request_payload);
-  } catch (error) {
+    } catch (error) {
+    console.error('[kpay.dispatch]', {
+      operationId: operation.id,
+      externalId: operation.external_id,
+      environment: operation.environment,
+      providerHttpStatus: error.providerHttpStatus,
+      definitive: error.definitive,
+      message: error.message,
+    });
+
     if (error.definitive) {
       await applyEvent({ event: operation.kind === 'DEPOSIT' ? 'payment.failed' : 'payout.failed', status: 'FAILED',
         externalId: operation.external_id, paymentId: operation.provider_id || 'init-rejected', amount: operation.expected_amount }, true);
