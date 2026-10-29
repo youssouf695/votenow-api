@@ -15,6 +15,9 @@ async function request(method, path, data) {
     const status = error.response?.status;
     const safe = new Error('La demande KPay ne peut pas être confirmée pour le moment.');
     safe.providerHttpStatus = status || null;
+    const upstream = error.response?.data;
+    safe.providerErrorCode = typeof upstream?.code === 'string' ? upstream.code.slice(0, 80) : null;
+    safe.providerErrorType = typeof upstream?.error === 'string' ? upstream.error.slice(0, 80) : null;
     safe.definitive = [400, 401, 403, 404, 422].includes(status);
     throw safe;
   }
@@ -29,5 +32,7 @@ module.exports = {
   predictProvider: phoneNumber => request('POST', '/api/v1/payments/predict-provider', { phoneNumber }),
   me: () => request('GET', '/api/v1/payments/me'),
   balance: () => request('GET', '/api/v1/payments/balance'),
+  availability: () => request('GET', '/api/v1/payments/availability'),
+  getPayment: providerId => request('GET', `/api/v1/payments/${encodeURIComponent(providerId)}`),
   pricelist,
 };

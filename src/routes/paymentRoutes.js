@@ -8,6 +8,8 @@ const router = express.Router();
 // Le webhook KPay est enregistré dans app.js avant express.json.
 
 // Routes publiques
+router.get('/availability', paymentController.getPaymentAvailability);
+
 router.post('/initiate', [
   body('expected_amount').isInt({ min: 50, max: 1000000 }),
   body('request_id').isUUID().withMessage('Identifiant de tentative requis'),
@@ -19,6 +21,12 @@ router.post('/initiate', [
 ], paymentController.initiatePayment);
 
 router.get('/status/:paymentId', [
+  param('paymentId').isUUID()
+], paymentController.checkPaymentStatus);
+
+// Réconciliation explicite : utilise le contrôleur de statut existant,
+// qui tente déjà une consultation KPay pour un paiement en attente.
+router.post('/:paymentId/reconcile', [
   param('paymentId').isUUID()
 ], paymentController.checkPaymentStatus);
 
