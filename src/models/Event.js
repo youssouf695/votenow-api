@@ -31,6 +31,10 @@ const Event = sequelize.define('Event', {
       is: /^[a-z0-9-]+$/  // Seulement lettres minuscules, chiffres et tirets
     }
   },
+  site_version: { type: DataTypes.INTEGER, allowNull: false, defaultValue: 0 },
+  site_config: { type: DataTypes.JSONB, allowNull: true },
+  partners: { type: DataTypes.JSONB, allowNull: false, defaultValue: [] },
+  archived_at: { type: DataTypes.DATE, allowNull: true },
   description: {
     type: DataTypes.TEXT
   },

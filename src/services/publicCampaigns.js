@@ -11,6 +11,7 @@ function buildPublicQuery(query, now = new Date()) {
   else if (status === 'upcoming') where = { status: 'active', starts_at: { [Op.gt]: now }, [Op.and]: [notEnded] };
   else if (status === 'active') where = { status: 'active', [Op.and]: [notEnded, { [Op.or]: [{ starts_at: null }, { starts_at: { [Op.lte]: now } }] }] };
   else where = { status: { [Op.in]: ['active', 'closed'] } };
+  where.archived_at = null;
   return { where, page, limit };
 }
 function publicStatus(event, now = Date.now()) {

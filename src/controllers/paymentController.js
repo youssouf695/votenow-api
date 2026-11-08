@@ -112,7 +112,7 @@ exports.initiatePayment = async (req, res) => {
         const now = Date.now();
 
         if (
-            !event ||
+            !event || event.archived_at ||
             event.status !== 'active' ||
             (event.starts_at &&
                 new Date(event.starts_at).getTime() > now) ||

@@ -30,6 +30,8 @@ const Candidate = sequelize.define('Candidate', {
       max: 999
     }
   },
+  slogan: { type: DataTypes.STRING(200), allowNull: true },
+  category_id: { type: DataTypes.UUID, allowNull: true, references: { model: 'campaign_categories', key: 'id' }, onDelete: 'RESTRICT' },
   bio: {
     type: DataTypes.TEXT
   },

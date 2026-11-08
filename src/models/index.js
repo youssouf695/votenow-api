@@ -1,3 +1,4 @@
+const CampaignCategory = require('./CampaignCategory');
 const KpayOperation = require('./KpayOperation');
 const User = require('./User');
 const Event = require('./Event');
@@ -180,8 +181,12 @@ User.hasMany(Commission, {
 
 
 
+Event.hasMany(CampaignCategory, { foreignKey: 'event_id', as: 'categories' });
+CampaignCategory.belongsTo(Event, { foreignKey: 'event_id', as: 'event' });
+Candidate.belongsTo(CampaignCategory, { foreignKey: 'category_id', as: 'category' });
 // ==================== EXPORTS ====================
 module.exports = {
+  CampaignCategory,
   KpayOperation,
   User,
   Event,

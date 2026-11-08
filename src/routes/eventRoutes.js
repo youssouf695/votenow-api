@@ -15,6 +15,10 @@ router.get('/public/id/:id', eventController.getPublicEventById); // ← Nouvell
 // ==================== ROUTES PROTÉGÉES ====================
 // Toutes les routes après auth nécessitent une authentification
 router.use(auth);
+const campaignController = require('../controllers/campaignController');
+router.get('/:id/site', authorize('organizer', 'admin'), campaignController.getSite);
+router.put('/:id/site', authorize('organizer', 'admin'), campaignController.saveSite);
+router.post('/:id/archive', authorize('organizer', 'admin'), campaignController.archive);
 
 router.delete('/:id', authorize('organizer', 'admin'), (req, res) => {
   return res.status(409).json({ error: 'Une campagne ne peut pas être supprimée. Clôturez-la pour conserver son historique.' });

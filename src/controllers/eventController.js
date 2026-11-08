@@ -1,4 +1,4 @@
-const { Event, Candidate, User } = require('../models');
+const { Event, Candidate, User, CampaignCategory } = require('../models');
 const sequelize = require('../config/database'); // ✅ import direct
 const { validationResult } = require('express-validator');
 const { Op } = require('sequelize');
@@ -44,6 +44,9 @@ exports.createEvent = async (req, res) => {
       title,
       slug,
       description:     description     || null,
+      cover_image_url: req.body.cover_image_url || null,
+      avatar_url: req.body.avatar_url || null,
+      site_config: req.body.site_config ? require('../services/campaignSettings').settings(req.body.site_config) : null,
       vote_price_fcfa: vote_price_fcfa || 200,
       votes_per_payment: votes_per_payment || 1,
       commission_rate: 15.00,
@@ -59,7 +62,7 @@ exports.createEvent = async (req, res) => {
 
   } catch (error) {
     console.error('Erreur createEvent:', error.message);
-    res.status(500).json({ error: error.message });
+    res.status(error.status || 500).json({ error: error.status ? error.message : 'Opération de campagne indisponible' });
   }
 };
 
@@ -67,8 +70,9 @@ exports.createEvent = async (req, res) => {
 exports.getEventById = async (req, res) => {
   try {
     const { id } = req.params;
-    const event = await Event.findByPk(id, {
-      include: [{
+    const event = await Event.findOne({
+      where: { id, organizer_id: req.user.id },
+      include: [{ model: CampaignCategory, as: 'categories' }, {
         model: Candidate,
         as: 'candidates', // ← AJOUTE L'ALIAS ICI !
         where: { is_active: true },
@@ -83,7 +87,7 @@ exports.getEventById = async (req, res) => {
     res.json({ event });
   } catch (error) {
     console.error('Erreur getEventById:', error);
-    res.status(500).json({ error: error.message });
+    res.status(error.status || 500).json({ error: error.status ? error.message : 'Opération de campagne indisponible' });
   }
 };
 
@@ -95,9 +99,9 @@ exports.getPublicEventById = async (req, res) => {
     const event = await Event.findOne({
       where: { 
         id,
-        status: 'active'
+        status: { [Op.in]: ['active', 'closed'] }, archived_at: null
       },
-      include: [{
+      include: [{ model: CampaignCategory, as: 'categories' }, {
         model: Candidate,
         as: 'candidates', // ← AJOUTE L'ALIAS ICI
         where: { is_active: true },
@@ -116,7 +120,7 @@ exports.getPublicEventById = async (req, res) => {
     res.json({ event });
   } catch (error) {
     console.error('Erreur getPublicEventById:', error);
-    res.status(500).json({ error: error.message });
+    res.status(error.status || 500).json({ error: error.status ? error.message : 'Opération de campagne indisponible' });
   }
 };
 
@@ -132,7 +136,7 @@ exports.getMyEvents = async (req, res) => {
     const events = await Event.findAndCountAll({
       where,
       distinct: true,
-      include: [{
+      include: [{ model: CampaignCategory, as: 'categories' }, {
         model: Candidate,
         as: 'candidates',      // ✅ alias correct
         attributes: ['id', 'name', 'number', 'vote_count', 'photo_url'],
@@ -152,7 +156,7 @@ exports.getMyEvents = async (req, res) => {
 
   } catch (error) {
     console.error('Erreur getMyEvents:', error.message);
-    res.status(500).json({ error: error.message });
+    res.status(error.status || 500).json({ error: error.status ? error.message : 'Opération de campagne indisponible' });
   }
 };
 
@@ -163,7 +167,7 @@ exports.getEventBySlug = async (req, res) => {
     const { slug } = req.params;
 
     const event = await Event.findOne({
-      where: { slug },
+      where: { slug, archived_at: null },
       include: [
         {
           model: Candidate,
@@ -194,7 +198,7 @@ exports.getEventBySlug = async (req, res) => {
 
   } catch (error) {
     console.error('Erreur getEventBySlug:', error.message);
-    res.status(500).json({ error: error.message });
+    res.status(error.status || 500).json({ error: error.status ? error.message : 'Opération de campagne indisponible' });
   }
 };
 
@@ -206,10 +210,11 @@ exports.getPublicEventBySlug = async (req, res) => {
     console.log('🔍 [PUBLIC] Utilisateur:', req.user ? 'Connecté' : 'Non connecté'); // ← Vérifie si req.user existe
 
     const event = await Event.findOne({
-      where: { slug },
-      include: [{
+      where: { slug, archived_at: null },
+      include: [{ model: CampaignCategory, as: 'categories' }, {
         model: Candidate,
         as: 'candidates',
+        where: { is_active: true },
         required: false
       }]
     });
@@ -219,14 +224,14 @@ exports.getPublicEventBySlug = async (req, res) => {
     }
 
     // Ne montrer que les événements publiés
-    if (event.status !== 'active') {
+    if (!['active', 'closed'].includes(event.status) || event.archived_at) {
       return res.status(404).json({ error: 'Événement non trouvé' });
     }
 
     res.json({ event });
   } catch (error) {
     console.error('❌ [PUBLIC] Erreur:', error);
-    res.status(500).json({ error: error.message });
+    res.status(error.status || 500).json({ error: error.status ? error.message : 'Opération de campagne indisponible' });
   }
 };
 
@@ -243,13 +248,13 @@ exports.updateEvent = async (req, res) => {
       return res.status(404).json({ error: 'Événement non trouvé' });
     }
 
-    if (event.status === 'closed') {
+    if (event.status === 'closed' || event.archived_at) {
       return res.status(400).json({ error: 'Impossible de modifier un événement clôturé' });
     }
 
     // Champs autorisés à la modification
     const allowed = [
-      'title', 'description', 'cover_image_url',
+      'title', 'description', 'cover_image_url', 'avatar_url',
       'vote_price_fcfa', 'votes_per_payment',
       'starts_at', 'ends_at', 'max_candidates',
       'allow_anonymous', 'show_results'
@@ -267,7 +272,7 @@ exports.updateEvent = async (req, res) => {
 
   } catch (error) {
     console.error('Erreur updateEvent:', error.message);
-    res.status(500).json({ error: error.message });
+    res.status(error.status || 500).json({ error: error.status ? error.message : 'Opération de campagne indisponible' });
   }
 };
 
@@ -303,7 +308,7 @@ exports.publishEvent = async (req, res) => {
 
   } catch (error) {
     console.error('Erreur publishEvent:', error.message);
-    res.status(500).json({ error: error.message });
+    res.status(error.status || 500).json({ error: error.status ? error.message : 'Opération de campagne indisponible' });
   }
 };
 
@@ -321,7 +326,7 @@ exports.closeEvent = async (req, res) => {
       return res.status(404).json({ error: 'Événement non trouvé' });
     }
 
-    if (event.status === 'closed') {
+    if (event.status === 'closed' || event.archived_at) {
       return res.status(400).json({ error: 'Événement déjà clôturé' });
     }
 
@@ -331,7 +336,7 @@ exports.closeEvent = async (req, res) => {
 
   } catch (error) {
     console.error('Erreur closeEvent:', error.message);
-    res.status(500).json({ error: error.message });
+    res.status(error.status || 500).json({ error: error.status ? error.message : 'Opération de campagne indisponible' });
   }
 };
 
@@ -346,14 +351,14 @@ exports.getCandidates = async (req, res) => {
     });
     res.json({ candidates });
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    res.status(error.status || 500).json({ error: error.status ? error.message : 'Opération de campagne indisponible' });
   }
 };
 
 exports.addCandidate = async (req, res) => {
   try {
     const { eventId } = req.params;
-    const { name, number, bio, photo_url } = req.body;
+    const { name, number, bio, photo_url, slogan, category_id } = req.body;
 
     const event = await Event.findOne({
       where: { id: eventId, organizer_id: req.user.id }
@@ -363,7 +368,7 @@ exports.addCandidate = async (req, res) => {
       return res.status(404).json({ error: 'Événement non trouvé' });
     }
 
-    if (event.status === 'closed') {
+    if (event.status === 'closed' || event.archived_at) {
       return res.status(400).json({ error: 'Impossible d\'ajouter un candidat à un événement clôturé' });
     }
 
@@ -383,9 +388,14 @@ exports.addCandidate = async (req, res) => {
       }
     }
 
+    if (slogan !== undefined && (typeof slogan !== 'string' || slogan.length > 200)) return res.status(400).json({ error: 'Slogan limité à 200 caractères' });
+    if (category_id && !/^[a-f0-9-]{36}$/i.test(category_id)) return res.status(400).json({ error: 'Catégorie invalide' });
+    if (category_id && !await CampaignCategory.findOne({ where: { id: category_id, event_id: eventId } })) return res.status(400).json({ error: 'Catégorie invalide pour cette campagne' });
     const candidate = await Candidate.create({
       event_id:  eventId,
       name,
+      slogan: slogan?.trim() || null,
+      category_id: category_id || null,
       number:    number    || null,
       bio:       bio       || null,
       photo_url: photo_url || null
@@ -395,7 +405,7 @@ exports.addCandidate = async (req, res) => {
 
   } catch (error) {
     console.error('Erreur addCandidate:', error.message);
-    res.status(500).json({ error: error.message });
+    res.status(error.status || 500).json({ error: error.status ? error.message : 'Opération de campagne indisponible' });
   }
 };
 
@@ -417,19 +427,24 @@ exports.updateCandidate = async (req, res) => {
       return res.status(404).json({ error: 'Candidat non trouvé' });
     }
 
-    const allowed = ['name', 'number', 'bio', 'photo_url', 'is_active', 'position', 'metadata'];
+    const allowed = ['slogan', 'category_id', 'name', 'number', 'bio', 'photo_url', 'is_active', 'position', 'metadata'];
     const updates = {};
     allowed.forEach(field => {
       if (req.body[field] !== undefined) updates[field] = req.body[field];
     });
 
+    if (candidate.event?.archived_at) return res.status(409).json({ error: 'Campagne archivée' });
+    if (updates.slogan !== undefined && updates.slogan !== null && (typeof updates.slogan !== 'string' || updates.slogan.length > 200)) return res.status(400).json({ error: 'Slogan limité à 200 caractères' });
+    if (updates.category_id && !/^[a-f0-9-]{36}$/i.test(updates.category_id)) return res.status(400).json({ error: 'Catégorie invalide' });
+    if (updates.category_id && !await CampaignCategory.findOne({ where: { id: updates.category_id, event_id: candidate.event_id } })) return res.status(400).json({ error: 'Catégorie invalide pour cette campagne' });
+    if (updates.category_id === '') updates.category_id = null;
     await candidate.update(updates);
 
     res.json({ message: 'Candidat mis à jour', candidate });
 
   } catch (error) {
     console.error('Erreur updateCandidate:', error.message);
-    res.status(500).json({ error: error.message });
+    res.status(error.status || 500).json({ error: error.status ? error.message : 'Opération de campagne indisponible' });
   }
 };
 
@@ -451,6 +466,7 @@ exports.deleteCandidate = async (req, res) => {
       return res.status(404).json({ error: 'Candidat non trouvé' });
     }
 
+    if (candidate.event?.archived_at) return res.status(409).json({ error: 'Campagne archivée : historique conservé.' });
     if (candidate.vote_count > 0) {
       // Soft delete — ne pas supprimer un candidat qui a déjà reçu des votes
       await candidate.update({ is_active: false });
@@ -462,7 +478,7 @@ exports.deleteCandidate = async (req, res) => {
 
   } catch (error) {
     console.error('Erreur deleteCandidate:', error.message);
-    res.status(500).json({ error: error.message });
+    res.status(error.status || 500).json({ error: error.status ? error.message : 'Opération de campagne indisponible' });
   }
 };
 
@@ -523,7 +539,7 @@ exports.getEventRanking = async (req, res) => {
 
   } catch (error) {
     console.error('Erreur getEventRanking:', error.message);
-    res.status(500).json({ error: error.message });
+    res.status(error.status || 500).json({ error: error.status ? error.message : 'Opération de campagne indisponible' });
   }
 };
 

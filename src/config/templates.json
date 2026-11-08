@@ -1,0 +1,112 @@
+[
+  {
+    "id": "editorial",
+    "name": "Éditorial",
+    "name_en": "Editorial",
+    "background": "#f5f0e8",
+    "text": "#20344a",
+    "accent": "#a15430",
+    "layout": "split",
+    "shape": "portrait",
+    "font": "serif"
+  },
+  {
+    "id": "cinema",
+    "name": "Cinéma",
+    "name_en": "Cinema",
+    "background": "#111522",
+    "text": "#f5f1e7",
+    "accent": "#d3ab58",
+    "layout": "immersive",
+    "shape": "landscape",
+    "font": "serif"
+  },
+  {
+    "id": "minimal",
+    "name": "Essentiel",
+    "name_en": "Essential",
+    "background": "#fafafa",
+    "text": "#182c30",
+    "accent": "#176d65",
+    "layout": "minimal",
+    "shape": "square",
+    "font": "sans"
+  },
+  {
+    "id": "arena",
+    "name": "Arène",
+    "name_en": "Arena",
+    "background": "#102c27",
+    "text": "#f1f6d7",
+    "accent": "#cfef57",
+    "layout": "scoreboard",
+    "shape": "square",
+    "font": "sans"
+  },
+  {
+    "id": "gala",
+    "name": "Gala",
+    "name_en": "Gala",
+    "background": "#1b1027",
+    "text": "#f5edf9",
+    "accent": "#e6b78b",
+    "layout": "centered",
+    "shape": "arch",
+    "font": "serif"
+  },
+  {
+    "id": "mosaic",
+    "name": "Mosaïque",
+    "name_en": "Mosaic",
+    "background": "#f8ebe6",
+    "text": "#3b2532",
+    "accent": "#a23b5a",
+    "layout": "mosaic",
+    "shape": "square",
+    "font": "sans"
+  },
+  {
+    "id": "studio",
+    "name": "Studio",
+    "name_en": "Studio",
+    "background": "#efebde",
+    "text": "#242821",
+    "accent": "#5a6a43",
+    "layout": "asymmetric",
+    "shape": "portrait",
+    "font": "serif"
+  },
+  {
+    "id": "festival",
+    "name": "Festival",
+    "name_en": "Festival",
+    "background": "#fff3cd",
+    "text": "#492651",
+    "accent": "#c74335",
+    "layout": "banner",
+    "shape": "rounded",
+    "font": "sans"
+  },
+  {
+    "id": "corporate",
+    "name": "Institution",
+    "name_en": "Institutional",
+    "background": "#f0f4f8",
+    "text": "#122f51",
+    "accent": "#225dac",
+    "layout": "compact",
+    "shape": "landscape",
+    "font": "sans"
+  },
+  {
+    "id": "community",
+    "name": "Communauté",
+    "name_en": "Community",
+    "background": "#f0f6ed",
+    "text": "#263b2b",
+    "accent": "#52763c",
+    "layout": "community",
+    "shape": "round",
+    "font": "sans"
+  }
+]

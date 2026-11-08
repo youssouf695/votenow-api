@@ -347,6 +347,7 @@ exports.updateEvent = async (req, res) => {
       return res.status(404).json({ error: 'Événement non trouvé' });
     }
 
+    if (event.archived_at) return res.status(409).json({ error: 'Campagne archivée : historique conservé, modification interdite.' });
     const updates = {};
     if (status          !== undefined) updates.status          = status;
     if (commission_rate !== undefined) updates.commission_rate = commission_rate;
