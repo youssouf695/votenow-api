@@ -24,9 +24,22 @@ function settings(input) {
   for (const [key, allowed, fallback] of [
     ['shape',['square','rounded','round','portrait','arch','landscape'],template.shape],
     ['font',['sans','serif'],template.font],
-    ['sound',['none','calm','bright','soft'],'none'],
+    ['shadow',['none','soft','dramatic','glow'],template.shadow||'soft'],
+    ['hero_layout',['overlay-left','overlay-center','split'],template.hero_layout],
+    ['card_style',['minimal','poster','detailed'],template.card_style],
+    ['podium_style',['steps','spotlight','editorial'],template.podium_style],
+    ['cover_position',['top','center','bottom'],template.cover_position],
+    ['decoration',['plain','glow','mesh','confetti','lattice'],template.decoration||'glow'],
+    ['sound',['none','calm','bright','soft','sparkle','fanfare','marimba','pulse','chime','celebrate'],'none'],
   ]) { const value=input[key] || fallback; if (!allowed.includes(value)) throw invalid(`${key} invalide`); result[key]=value; }
   for (const key of ['show_ranking','show_counts']) { if (input[key] !== undefined && typeof input[key] !== 'boolean') throw invalid(`${key} invalide`); result[key] = input[key] !== false; }
+  for(const key of ['show_podium','show_leader','show_categories','show_slogan','show_category_labels','show_vote_button','show_share_button','show_candidate_number','show_hero_stats']) {
+    if(input[key]!==undefined&&typeof input[key]!=='boolean')throw invalid(`${key} invalide`);
+    result[key]=typeof input[key]==='boolean'?input[key]:template[key]!==false;
+  }
+  const overlay=input.hero_overlay??template.hero_overlay;
+  if(!Number.isInteger(overlay)||overlay<35||overlay>85)throw invalid('Opacité de couverture invalide');
+  result.hero_overlay=overlay;
   result.header_text = text(input.header_text ?? '', 240, 'Texte d’accueil');
   result.footer_text = text(input.footer_text ?? '', 500, 'Pied de page');
   return result;

@@ -197,3 +197,9 @@ module.exports = {
   cleanExpiredRateLimits
 };
 
+module.exports = {
+  rateLimit,
+  initializeRateLimits,
+  protectSensitiveActions,
+  cleanExpiredRateLimits
+};
