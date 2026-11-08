@@ -1,3 +1,4 @@
+const { publicFailure } = require('../services/paymentFailure');
 const crypto = require('node:crypto');
 const {validationResult} = require('express-validator');
 const {Payment, Event, Candidate, KpayOperation} = require('../models');
@@ -37,6 +38,7 @@ async function responseFor(operation) {
     }
 
     return {
+        ...publicFailure(current, payment.status),
         payment_id: payment.id,
         status: payment.status,
         amount: payment.amount_fcfa,
@@ -215,7 +217,8 @@ exports.initiatePayment = async (req, res) => {
                             provider: predicted.provider,
                             phoneNumber: phone,
                             externalId,
-                            description: `Votes : ${event.title}`.slice(0, 200),
+                            currency: 'XAF',
+                            description: `${event.title} — ${candidate.name}`.slice(0, 200),
                             metadata: {
                                 paymentId,
                             },
@@ -294,6 +297,7 @@ exports.checkPaymentStatus = async (req, res) => {
         const refreshedOperation = operation ? await KpayOperation.findByPk(operation.id) : null;
 
         return res.json({
+            ...publicFailure(refreshedOperation, refreshedPayment.status),
             payment_id: refreshedPayment.id,
             status: refreshedPayment.status,
             amount: refreshedPayment.amount_fcfa,

@@ -350,7 +350,10 @@ exports.updateEvent = async (req, res) => {
     const updates = {};
     if (status          !== undefined) updates.status          = status;
     if (commission_rate !== undefined) updates.commission_rate = commission_rate;
-    if (vote_price_fcfa !== undefined) updates.vote_price_fcfa = vote_price_fcfa;
+    if (vote_price_fcfa !== undefined) {
+      if (!Number.isInteger(Number(vote_price_fcfa)) || Number(vote_price_fcfa) < 100 || Number(vote_price_fcfa) > 10000) return res.status(400).json({ error: 'Le prix d’un vote doit être compris entre 100 et 10 000 FCFA.' });
+      updates.vote_price_fcfa = vote_price_fcfa;
+    }
 
     await event.update(updates);
 

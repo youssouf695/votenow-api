@@ -30,6 +30,8 @@ exports.createEvent = async (req, res) => {
       allow_anonymous, show_results, max_candidates
     } = req.body;
 
+    if (!Number.isInteger(Number(vote_price_fcfa)) || Number(vote_price_fcfa) < 100 || Number(vote_price_fcfa) > 10000) return res.status(400).json({ error: 'Le prix d’un vote doit être compris entre 100 et 10 000 FCFA.' });
+
     // Slug unique
     let slug  = generateSlug(title);
     let count = 1;
@@ -258,6 +260,7 @@ exports.updateEvent = async (req, res) => {
       if (req.body[field] !== undefined) updates[field] = req.body[field];
     });
 
+    if (updates.vote_price_fcfa !== undefined && (!Number.isInteger(Number(updates.vote_price_fcfa)) || Number(updates.vote_price_fcfa) < 100 || Number(updates.vote_price_fcfa) > 10000)) return res.status(400).json({ error: 'Le prix d’un vote doit être compris entre 100 et 10 000 FCFA.' });
     await event.update(updates);
 
     res.json({ message: 'Événement mis à jour', event });
@@ -468,34 +471,19 @@ exports.deleteCandidate = async (req, res) => {
 
 exports.getPublicEvents = async (req, res) => {
   try {
-    const { page = 1, limit = 10 } = req.query;
-    const offset = (page - 1) * parseInt(limit);
-
+    const { buildPublicQuery, publicStatus } = require('../services/publicCampaigns');
+    const { where, page, limit } = buildPublicQuery(req.query);
     const events = await Event.findAndCountAll({
-      where: {
-        status:   'active',
-        ends_at:  { [Op.gt]: new Date() }
-      },
-      include: [{
-        model: User,
-        as: 'organizer',       // ✅ alias correct
-        attributes: ['id', 'full_name']
-      }],
-      order: [['created_at', 'DESC']],
-      limit: parseInt(limit),
-      offset
+      where,
+      include: [{ model: User, as: 'organizer', attributes: ['id', 'full_name'] }],
+      order: [['created_at', 'DESC']], limit, offset: (page - 1) * limit,
     });
-
     res.json({
-      events:     events.rows,
-      total:      events.count,
-      page:       parseInt(page),
-      totalPages: Math.ceil(events.count / parseInt(limit))
+      events: events.rows.map(row => { const data = row.toJSON(); return { ...data, display_status: publicStatus(data) }; }),
+      total: events.count, page, totalPages: Math.ceil(events.count / limit),
     });
-
   } catch (error) {
-    console.error('Erreur getPublicEvents:', error.message);
-    res.status(500).json({ error: error.message });
+    res.status(error.status || 500).json({ error: error.status ? error.message : 'Liste des campagnes indisponible' });
   }
 };
 

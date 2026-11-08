@@ -51,6 +51,9 @@ async function applyEvent(event, internal = false) {
         if (event.provider && operation.request_payload.provider && event.provider !== operation.request_payload.provider) throw failure('Opérateur incohérent');
         if (!internal && operation.provider_id && operation.provider_id !== event.paymentId) throw failure('Référence incohérente');
         if (terminal.has(operation.status)) {
+            if (operation.status === expected && expected === 'FAILED' && !operation.last_event?.failureReason && typeof event.failureReason === 'string') {
+                await operation.update({ last_event: event }, { transaction });
+            }
             if (operation.status !== expected && operation.status !== 'RECONCILIATION') {
                 await operation.update({
                     status: 'RECONCILIATION',
@@ -301,6 +304,7 @@ async function reconcileDeposit(operationId) {
             currency: data.currency, isTest: data.isTest,
             provider: data.provider, phoneNumber: data.phoneNumber,
             feeAmount: data.feeAmount, netAmount: data.netAmount,
+            failureReason: typeof data.failureReason === 'string' ? data.failureReason.slice(0, 1000) : null,
         });
         console.info('[kpay.reconcile] État terminal traité', {operationId, providerStatus: data.status});
     } catch (error) {

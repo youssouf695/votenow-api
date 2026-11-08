@@ -81,7 +81,7 @@ router.put('/events/:eventId', [
   param('eventId').isUUID(),
   body('status').optional().isIn(['draft', 'active', 'paused', 'closed']),
   body('commission_rate').optional().isFloat({ min: 0, max: 50 }),
-  body('vote_price_fcfa').optional().isInt({ min: 50 })
+  body('vote_price_fcfa').optional().isInt({ min: 100 })
 ], adminController.updateEvent);
 
 // ==================== GESTION DES RETRAITS ====================

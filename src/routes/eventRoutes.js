@@ -16,11 +16,15 @@ router.get('/public/id/:id', eventController.getPublicEventById); // ← Nouvell
 // Toutes les routes après auth nécessitent une authentification
 router.use(auth);
 
+router.delete('/:id', authorize('organizer', 'admin'), (req, res) => {
+  return res.status(409).json({ error: 'Une campagne ne peut pas être supprimée. Clôturez-la pour conserver son historique.' });
+});
+
 // --- Gestion des événements ---
 router.post('/',
   [
     body('title').notEmpty().withMessage('Titre requis'),
-    body('vote_price_fcfa').isInt({ min: 50, max: 10000 }).withMessage('Prix invalide'),
+    body('vote_price_fcfa').isInt({ min: 100, max: 10000 }).withMessage('Prix invalide'),
     body('starts_at').optional().isISO8601(),
     body('ends_at').optional().isISO8601()
   ],
@@ -42,7 +46,7 @@ router.put('/:id',
   [
     param('id').isUUID().withMessage('ID invalide'),
     body('title').optional().notEmpty(),
-    body('vote_price_fcfa').optional().isInt({ min: 50, max: 10000 })
+    body('vote_price_fcfa').optional().isInt({ min: 100, max: 10000 })
   ],
   authorize('organizer', 'admin'),
   eventController.updateEvent

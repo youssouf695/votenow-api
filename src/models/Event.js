@@ -107,6 +107,10 @@ const Event = sequelize.define('Event', {
   }
 }, {
   tableName: 'events',
+  hooks: {
+    beforeDestroy() { throw Object.assign(new Error('Une campagne ne peut pas être supprimée. Clôturez-la pour conserver son historique.'), { status: 409 }); },
+    beforeBulkDestroy() { throw Object.assign(new Error('Les campagnes ne peuvent pas être supprimées.'), { status: 409 }); },
+  },
   indexes: [
     {
       fields: ['organizer_id']
