@@ -19,6 +19,7 @@ const campaignController = require('../controllers/campaignController');
 const campaignAssets = require('../controllers/campaignAssetController');
 const { rateLimit } = require('../middleware/rateLimit');
 router.post('/:id/partner-logo', authorize('organizer','admin'), rateLimit({scope:'partner-logo',seconds:3600,limit:30,identify:req=>req.user.id}), express.raw({type:['image/jpeg','image/png','image/webp'],limit:'5mb'}), campaignAssets.uploadPartnerLogo);
+router.post('/:id/gallery-image', authorize('organizer','admin'), rateLimit({scope:'gallery-image',seconds:3600,limit:30,identify:req=>req.user.id}), express.raw({type:['image/jpeg','image/png','image/webp'],limit:'5mb'}), campaignAssets.uploadGalleryImage);
 router.get('/:id/site', authorize('organizer', 'admin'), campaignController.getSite);
 router.put('/:id/site', authorize('organizer', 'admin'), campaignController.saveSite);
 router.post('/:id/archive', authorize('organizer', 'admin'), campaignController.archive);
@@ -99,3 +100,4 @@ router.delete('/candidates/:candidateId',
 );
 
 module.exports = router;
+

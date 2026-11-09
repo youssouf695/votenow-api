@@ -18,9 +18,32 @@ function optionalAmount(value) {
     return Number.isFinite(amount) && amount >= 0 ? amount : null;
 }
 
+async function verifiedPayoutBeneficiary(withdrawal, transaction) {
+    const {WithdrawalBeneficiary} = require('../models');
+    const beneficiary = await WithdrawalBeneficiary.findOne({
+        where: {id: withdrawal.beneficiary_id, user_id: withdrawal.organizer_id, deleted_at: null},
+        transaction, ...(transaction ? {lock: transaction.LOCK.UPDATE} : {})
+    });
+    if (!beneficiary?.verified_at || !withdrawal.beneficiary_verified_at ||
+        new Date(beneficiary.verified_at).getTime() !== new Date(withdrawal.beneficiary_verified_at).getTime() ||
+        beneficiary.phone !== withdrawal.destination_phone || beneficiary.method !== withdrawal.method ||
+        beneficiary.full_name !== withdrawal.destination_name) {
+        throw failure('Le bénéficiaire du retrait doit être validé et correspondre aux coordonnées enregistrées.', 409);
+    }
+    return beneficiary;
+}
+
 async function payoutQuote(withdrawal) {
     if (process.env.KPAY_PAYOUT_PRICING_CONFIRMED !== 'true') {
         throw failure('Le tarif et l’arrondi des retraits doivent être confirmés auprès de KPay avant tout envoi. Aucun transfert lancé.', 503);
+    }
+    if (withdrawal.fee_policy === 'recipient_pays_v2') {
+        await verifiedPayoutBeneficiary(withdrawal);
+        const quote = await require('./recipientPayout').recipientQuote(withdrawal);
+        if (quote.fee !== withdrawal.fee_fcfa || quote.net !== withdrawal.net_fcfa || quote.rate !== withdrawal.pricing_snapshot?.rate || quote.rounding !== withdrawal.pricing_snapshot?.rounding || quote.environment !== withdrawal.pricing_snapshot?.environment) {
+            throw failure('Le tarif ou l’environnement de transfert a changé. Annulez la demande et confirmez un nouveau récapitulatif.', 409);
+        }
+        return quote;
     }
     const operator = {mtn_momo: 'MTN', orange_money: 'Orange'}[withdrawal.method];
     if (!operator) throw failure('Ce lot prend en charge les retraits MTN et Orange uniquement.', 422);
@@ -180,6 +203,23 @@ async function dispatch(operationId) {
     const operation = await sequelize.transaction(async transaction => {
         const row = await KpayOperation.findByPk(operationId, {transaction, lock: transaction.LOCK.UPDATE});
         if (!row || row.status !== 'CREATED') return null;
+        if (row.kind === 'PAYOUT') {
+            const withdrawal = await Withdrawal.findByPk(row.domain_id, {transaction, lock: transaction.LOCK.UPDATE});
+            if (withdrawal?.fee_policy === 'recipient_pays_v2') {
+                await verifiedPayoutBeneficiary(withdrawal, transaction);
+                const provider = {mtn_momo: 'MTN_MOMO_CMR', orange_money: 'ORANGE_CMR'}[withdrawal.method];
+                if (withdrawal.status !== 'processing' || row.environment !== getConfig().mode ||
+                    row.expected_amount !== withdrawal.amount_fcfa || row.request_payload?.amount !== withdrawal.amount_fcfa ||
+                    row.request_payload?.phoneNumber !== withdrawal.destination_phone || row.request_payload?.provider !== provider ||
+                    !Number.isSafeInteger(withdrawal.net_fcfa) || !Number.isSafeInteger(withdrawal.fee_fcfa) ||
+                    withdrawal.net_fcfa < 1 || withdrawal.fee_fcfa < 0 || withdrawal.net_fcfa + withdrawal.fee_fcfa !== withdrawal.amount_fcfa) {
+                    throw failure('Les coordonnées ou le récapitulatif du transfert ont changé. Aucun transfert lancé.', 409);
+                }
+                // Older admin handlers set target_net to the reserved amount. The frozen
+                // recipient-pays contract is authoritative for the new withdrawal policy.
+                await row.update({target_net: withdrawal.net_fcfa}, {transaction});
+            }
+        }
         await row.update({status: 'INITIATING', started_at: new Date()}, {transaction});
         return row;
     });
@@ -316,3 +356,5 @@ async function reconcileDeposit(operationId) {
 }
 
 module.exports = {hash, payoutQuote, dispatch, applyEvent, optionalAmount, failure, reconcileDeposit};
+
+

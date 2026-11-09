@@ -12,6 +12,13 @@ const Withdrawal = sequelize.define('Withdrawal', {
     allowNull: false,
     references: { model: 'users', key: 'id' }
   },
+  fee_policy: { type: DataTypes.STRING(32), allowNull: true },
+  fee_fcfa: { type: DataTypes.INTEGER, allowNull: true },
+  net_fcfa: { type: DataTypes.INTEGER, allowNull: true },
+  pricing_snapshot: { type: DataTypes.JSONB, allowNull: true },
+  beneficiary_verified_at: { type: DataTypes.DATE, allowNull: true },
+  beneficiary_id: { type: DataTypes.UUID, allowNull: true, references: { model: 'withdrawal_beneficiaries', key: 'id' }, onDelete: 'RESTRICT' },
+  request_key: { type: DataTypes.UUID, allowNull: true, unique: true },
   event_id: {
     type: DataTypes.UUID,
     allowNull: true,

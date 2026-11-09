@@ -1,0 +1,9 @@
+const {test}=require('node:test'),assert=require('node:assert/strict'),vm=require('node:vm'),fs=require('node:fs'),path=require('node:path');
+const source=fs.readFileSync(path.join(__dirname,'../scripts/migrate-withdrawal-beneficiaries.js'),'utf8');
+function fixture(){const columns={amount_fcfa:{}},added=[],queries=[];let authenticated=0,closed=0;
+ const qi={describeTable:async()=>({...columns}),addColumn:async(table,key,value)=>{assert.equal(table,'withdrawals');columns[key]=value;added.push(key)}};
+ const sequelize={authenticate:async()=>{authenticated++},getQueryInterface:()=>qi,query:async sql=>{queries.push(sql);return []},transaction:async fn=>fn({}),close:async()=>{closed++}};
+ async function run(apply){const context={process:{argv:apply?['node','script','--apply']:['node','script']},console:{log(){},error:message=>{throw Error(message)}},require:name=>name==='dotenv'?{config(){}}:name==='sequelize'?{DataTypes:{DATE:'date',UUID:'uuid',INTEGER:'integer',JSONB:'jsonb',STRING:n=>`varchar(${n})`}}:sequelize};await vm.runInNewContext(source,context)}
+ return {run,added,queries,state:()=>({authenticated,closed})};}
+test('migration without --apply prints plan without authenticating or changing schema',async()=>{const f=fixture();await f.run(false);assert.equal(f.state().authenticated,0);assert.equal(f.queries.length,0);assert.equal(f.added.length,0)});
+test('migration adds missing columns once and never updates balances or existing withdrawal records',async()=>{const f=fixture();await f.run(true);assert.equal(f.added.length,7);await f.run(true);assert.equal(f.added.length,7);assert.equal(f.state().authenticated,2);assert.equal(f.state().closed,2);for(const sql of f.queries){assert.doesNotMatch(sql,/\b(?:UPDATE|DELETE\s+FROM)\s+(?:users|withdrawals)\b/i);assert.doesNotMatch(sql,/\bDROP\b/i)}assert.ok(f.queries.some(sql=>sql.includes('CREATE TABLE IF NOT EXISTS withdrawal_beneficiaries')))});

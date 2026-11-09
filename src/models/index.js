@@ -1,3 +1,4 @@
+const WithdrawalBeneficiary = require('./WithdrawalBeneficiary');
 const CampaignCategory = require('./CampaignCategory');
 const KpayOperation = require('./KpayOperation');
 const User = require('./User');
@@ -186,6 +187,7 @@ CampaignCategory.belongsTo(Event, { foreignKey: 'event_id', as: 'event' });
 Candidate.belongsTo(CampaignCategory, { foreignKey: 'category_id', as: 'category' });
 // ==================== EXPORTS ====================
 module.exports = {
+  WithdrawalBeneficiary,
   CampaignCategory,
   KpayOperation,
   User,
@@ -200,4 +202,6 @@ module.exports = {
   LoginVerification,
   Verification
 };
+
+
 

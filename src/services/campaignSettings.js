@@ -42,6 +42,19 @@ function settings(input) {
   result.hero_overlay=overlay;
   result.header_text = text(input.header_text ?? '', 240, 'Texte d’accueil');
   result.footer_text = text(input.footer_text ?? '', 500, 'Pied de page');
+  if (input.gallery !== undefined && (!Array.isArray(input.gallery) || input.gallery.length > 30)) throw invalid('Maximum 30 images dans la galerie');
+  result.gallery = (input.gallery || []).map(row => {
+    if (!row || typeof row !== 'object' || Array.isArray(row)) throw invalid('Image de galerie invalide');
+    const image_url = safeUrl(row.image_url, 'Image de galerie');
+    if (!image_url) throw invalid('Image de galerie requise');
+    return { image_url, caption: text(row.caption ?? '', 200, 'Légende') };
+  });
+  if (input.show_gallery !== undefined && typeof input.show_gallery !== 'boolean') throw invalid('show_gallery invalide');
+  result.show_gallery = input.show_gallery !== false;
+  for (const key of ['sound_entry','sound_selection','sound_success']) {
+    if (input[key] !== undefined && typeof input[key] !== 'boolean') throw invalid(`${key} invalide`);
+    result[key] = input[key] !== false;
+  }
   return result;
 }
 function categories(input) {
@@ -60,3 +73,4 @@ function partners(input) {
   return input.map(row=>({name:text(row.name,150,'Nom partenaire',true),logo_url:safeUrl(row.logo_url,'Logo'),website:safeUrl(row.website,'Site partenaire'),contact:text(row.contact ?? '',200,'Contact partenaire')}));
 }
 module.exports={settings,categories,partners,safeUrl};
+
