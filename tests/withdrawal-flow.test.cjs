@@ -1,5 +1,5 @@
 const {test}=require('node:test'),assert=require('node:assert/strict'),vm=require('node:vm'),fs=require('node:fs'),path=require('node:path');
-function load(file,deps,env={}){const module={exports:{}};vm.runInNewContext(fs.readFileSync(path.join(__dirname,'../src/',file),'utf8'),{module,exports:module.exports,process:{env},Buffer,console:{...console,error(){}},Date,Map,Set,URL,require:name=>Object.hasOwn(deps,name)?deps[name]:require(name)});return module.exports;}
+function load(file,deps,env={}){deps['./walletCredit']=require('../src/services/walletCredit');const module={exports:{}};vm.runInNewContext(fs.readFileSync(path.join(__dirname,'../src/',file),'utf8'),{module,exports:module.exports,process:{env},Buffer,console:{...console,error(){}},Date,Map,Set,URL,require:name=>Object.hasOwn(deps,name)?deps[name]:require(name)});return module.exports;}
 function response(){return {statusCode:200,status(n){this.statusCode=n;return this},set(){return this},json(body){this.body=body;return this}}}
 const uuid='11111111-1111-4111-8111-111111111111',bid='22222222-2222-4222-8222-222222222222';
 function fixture(options={}){

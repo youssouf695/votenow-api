@@ -5,6 +5,7 @@ const client = require('./kpayClient');
 const {getConfig} = require('../config/kpay');
 const {integer, normalizePhone, grossForNet} = require('./kpayAmounts');
 
+const {walletCredit,resumableWalletNetCheck}=require('./walletCredit');
 const terminal = new Set(['COMPLETED', 'FAILED', 'CANCELLED', 'RECONCILIATION']);
 const hash = value => crypto.createHash('sha256').update(JSON.stringify(value)).digest('hex');
 
@@ -73,7 +74,7 @@ async function applyEvent(event, internal = false) {
         if (event.phoneNumber && operation.request_payload.phoneNumber && normalizePhone(event.phoneNumber) !== operation.request_payload.phoneNumber) throw failure('Bénéficiaire incohérent');
         if (event.provider && operation.request_payload.provider && event.provider !== operation.request_payload.provider) throw failure('Opérateur incohérent');
         if (!internal && operation.provider_id && operation.provider_id !== event.paymentId) throw failure('Référence incohérente');
-        if (terminal.has(operation.status)) {
+        if (terminal.has(operation.status) && !(expected==='COMPLETED'&&resumableWalletNetCheck(operation))) {
             if (operation.status === expected && expected === 'FAILED' && !operation.last_event?.failureReason && typeof event.failureReason === 'string') {
                 await operation.update({ last_event: event }, { transaction });
             }
@@ -99,9 +100,10 @@ async function applyEvent(event, internal = false) {
             const topup=await WalletTopup.findByPk(operation.domain_id,{transaction,lock:transaction.LOCK.UPDATE});
             if(!topup||topup.status!=='pending')throw failure('Recharge déjà finalisée ou absente',409);
             if(expected==='COMPLETED'){
-                const delivered=net??optionalAmount(operation.provider_net);
-                if(delivered===null){await operation.update({...details,status:'AWAITING_DETAILS',error_code:'NET_AMOUNT_MISSING'},{transaction});return operation;}
-                if(delivered!==topup.amount_fcfa){await operation.update({...details,status:'RECONCILIATION',error_code:'NET_AMOUNT_MISMATCH'},{transaction});return operation;}
+                const delivered=net??optionalAmount(operation.provider_net),chargedFee=fee??optionalAmount(operation.provider_fee);
+                const creditError=walletCredit(topup,operation,delivered,chargedFee);
+                if(creditError){await operation.update({...details,status:creditError==='NET_AMOUNT_MISSING'?'AWAITING_DETAILS':'RECONCILIATION',error_code:creditError},{transaction});return operation;}
+                await operation.update({error_code:null},{transaction});
                 await WalletEntry.create({wallet_id:topup.wallet_id,amount_delta:topup.amount_fcfa,balance_after:0,source_kind:'topup',source_id:topup.id},{transaction});
                 await topup.update({status:'success',completed_at:new Date()},{transaction});
             }else await topup.update({status:'failed',completed_at:new Date()},{transaction});
@@ -319,7 +321,7 @@ const lastLookup = new Map();
 async function reconcileDeposit(operationId) {
     const operation = await KpayOperation.findByPk(operationId);
     if (!operation || !['DEPOSIT','WALLET_TOPUP'].includes(operation.kind) || !operation.provider_id ||
-        !['PENDING', 'UNKNOWN', 'INITIATING'].includes(operation.status)) return;
+        (!['PENDING', 'UNKNOWN', 'INITIATING'].includes(operation.status)&&!resumableWalletNetCheck(operation))) return;
     const now = Date.now();
     if (now - (lastLookup.get(operationId) || 0) < 15000) return;
     lastLookup.set(operationId, now);
@@ -350,7 +352,7 @@ async function reconcileDeposit(operationId) {
             console.info('[kpay.reconcile] Statut non terminal', {operationId, providerStatus: data.status});
             return;
         }
-        await applyEvent({
+        const applied=await applyEvent({
             event: events[data.status], status: data.status,
             externalId: data.externalId, paymentId: data.id,
             reference: data.reference, amount: data.amount,
@@ -359,7 +361,8 @@ async function reconcileDeposit(operationId) {
             feeAmount: data.feeAmount, netAmount: data.netAmount,
             failureReason: typeof data.failureReason === 'string' ? data.failureReason.slice(0, 1000) : null,
         });
-        console.info('[kpay.reconcile] État terminal traité', {operationId, providerStatus: data.status});
+        console.info('[kpay.reconcile] Résultat local', {operationId,providerStatus:data.status,localStatus:applied.status,errorCode:applied.error_code||null});
+        return applied;
     } catch (error) {
         console.warn('[kpay.reconcile]', {
             operationId, code: error.code || null,
