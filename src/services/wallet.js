@@ -2,19 +2,22 @@ const crypto=require('node:crypto');
 const db=require('../config/database');
 const {WalletAccount,WalletEntry,WalletTopup,WalletPurchase}=require('../models/Wallet');
 const {User,Payment,Event,Candidate,Vote,Commission,KpayOperation}=require('../models');
-const {integer,normalizePhone,grossForNet,amounts}=require('./kpayAmounts');
+const {integer,normalizePhone,amounts}=require('./kpayAmounts');
 const {failure,hash}=require('./kpayOperations');
 const kpay=require('./kpayClient'),{getConfig}=require('../config/kpay');
 function uuid(value){if(typeof value!=='string'||!/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i.test(value))throw failure('Référence invalide');return value}
 async function account(user,transaction){const row=await WalletAccount.findOne({where:{user_id:user.id},transaction,...(transaction?{lock:transaction.LOCK.UPDATE}:{})});if(!row)throw failure('Activez votre VoteNow Card.',409);return row}
 async function quote(amount,phone){
  amount=integer(amount);if(amount<100||amount>1000000)throw failure('Recharge de 100 à 1 000 000 FCFA requise');phone=normalizePhone(phone);
- if(process.env.KPAY_WALLET_PRICING_CONFIRMED!=='true')throw failure('Les frais de recharge doivent être configurés et confirmés avant tout encaissement.',503);
+ const config=getConfig();
  const predicted=await kpay.predictProvider(phone);
- const operator={MTN_MOMO_CMR:'MTN',ORANGE_CMR:'ORANGE'}[predicted.provider];if(predicted.country!=='CMR'||!operator)throw failure('Opérateur camerounais non pris en charge',422);
- const raw=process.env[`KPAY_WALLET_${operator}_RATE`];if(!raw||!/^0(?:\.\d+)?$/.test(raw))throw failure('Tarif de recharge non configuré',503);
- const result=grossForNet(amount,Number(raw),process.env.KPAY_WALLET_ROUNDING||'exact');
- return {...result,phone,provider:predicted.provider,environment:getConfig().mode};
+ if(predicted.country!=='CMR'||!['MTN_MOMO_CMR','ORANGE_CMR'].includes(predicted.provider))throw failure('Opérateur camerounais non pris en charge',422);
+ let availability;try{availability=await kpay.availability()}catch{throw failure('Disponibilité Mobile Money momentanément invérifiable. Réessayez plus tard.',503)}
+ const provider=Array.isArray(availability)?availability.find(row=>row.country==='CMR')?.providers?.find(row=>row.provider===predicted.provider):null;
+ if(provider?.operationTypes?.DEPOSIT!=='OPERATIONAL')throw failure('Cet opérateur Mobile Money est actuellement indisponible.',503);
+ // Same amount contract as a vote: KPay handles customer fees at checkout.
+ // No additional VoteNow top-up fee, commission or gross-for-net calculation.
+ return {gross:amount,net:amount,fee:0,phone,provider:predicted.provider,environment:config.mode,fee_policy:'same_as_vote'};
 }
 async function initiate(user,input){
  if(!user.is_verified)throw failure('Un compte vérifié est nécessaire.',403);
