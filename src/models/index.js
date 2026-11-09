@@ -187,6 +187,7 @@ CampaignCategory.belongsTo(Event, { foreignKey: 'event_id', as: 'event' });
 Candidate.belongsTo(CampaignCategory, { foreignKey: 'category_id', as: 'category' });
 // ==================== EXPORTS ====================
 module.exports = {
+  ...require('./Wallet'),
   WithdrawalBeneficiary,
   CampaignCategory,
   KpayOperation,
@@ -202,6 +203,3 @@ module.exports = {
   LoginVerification,
   Verification
 };
-
-
-

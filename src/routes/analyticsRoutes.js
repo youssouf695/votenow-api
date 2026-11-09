@@ -1,0 +1,5 @@
+const router=require('express').Router(),{auth,authorize}=require('../middleware/auth'),{rateLimit}=require('../middleware/rateLimit'),service=require('../services/telemetry');
+router.post('/collect',rateLimit({scope:'analytics-ingest',limit:600,seconds:60,identify:req=>req.ip}),service.collect);
+router.get('/report',auth,authorize('admin'),rateLimit({scope:'analytics-report',limit:20,seconds:60,identify:req=>req.user.id}),async(req,res)=>{try{res.set('Cache-Control','no-store').json(await service.report(req.query))}catch(e){console.error('[analytics.report]',{code:e.original?.code||e.code||null});res.status(e.status||503).json({error:e.status?e.message:'Statistiques indisponibles. Vérifiez les migrations analytics et portefeuille.'})}});
+router.get('/activity',auth,authorize('admin'),async(req,res)=>{try{res.set('Cache-Control','no-store').json(await service.activity(req.query))}catch(e){res.status(e.status||503).json({error:e.status?e.message:'Activité indisponible'})}});
+module.exports=router;

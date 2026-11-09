@@ -24,6 +24,7 @@ app.use(cors({
   credentials: true
 }));
 app.use(morgan('dev'));
+app.use(require('./services/telemetry').server);
 // Notification serveur KPay : corps brut indispensable au HMAC.
 app.post('/api/payments/webhook', express.raw({ type: 'application/json', limit: '100kb' }), require('./controllers/kpayWebhookController').handleWebhook);
 app.use(express.json({ limit: '100kb' }));
@@ -34,7 +35,9 @@ app.use(express.urlencoded({
 
 app.use('/api', protectSensitiveActions);
 
+app.use('/api/analytics',require('./routes/analyticsRoutes'));
 // Routes
+app.use('/api/wallet', require('./routes/walletRoutes'));
 app.use('/api/auth', authRoutes);
 app.use('/api/events', eventRoutes);
 app.use('/api/payments', paymentRoutes);
@@ -64,6 +67,3 @@ app.get('/', (req, res) => {
 });
 
 module.exports = app;
-
-
-

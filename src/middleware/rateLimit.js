@@ -145,6 +145,8 @@ function protectSensitiveActions(req, res, next) {
   ];
 
   const sendPaths = [
+    '/auth/register',
+    '/auth/login',
     '/auth/request-login-code',
     '/verifications/request-login-code',
     '/verifications/send-pre-registration-code'
@@ -203,4 +205,3 @@ module.exports = {
   protectSensitiveActions,
   cleanExpiredRateLimits
 };
-

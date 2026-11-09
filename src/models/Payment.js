@@ -23,9 +23,10 @@ const Payment = sequelize.define('Payment', {
       key: 'id'
     }
   },
+  wallet_user_id: {type:DataTypes.UUID,allowNull:true,references:{model:'users',key:'id'}},
   voter_phone: {
     type: DataTypes.STRING(20),
-    allowNull: false
+    allowNull: true
   },
   voter_name: {
     type: DataTypes.STRING(150)
@@ -48,7 +49,7 @@ const Payment = sequelize.define('Payment', {
   },
   commission_rate_applied: { type: DataTypes.DECIMAL(5, 2), allowNull: true },
   method: {
-    type: DataTypes.ENUM('mtn_momo', 'orange_money', 'card'),
+    type: DataTypes.ENUM('mtn_momo', 'orange_money', 'card', 'votenow_card'),
     allowNull: true
   },
   provider_ref: {
@@ -81,4 +82,3 @@ const Payment = sequelize.define('Payment', {
 });
 
 module.exports = Payment;
-

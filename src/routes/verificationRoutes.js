@@ -8,8 +8,8 @@ router.post('/send-pre-registration-code', verificationController.sendPreRegistr
 router.post('/verify-and-create', verificationController.verifyAndCreateAccount);
 
 // Routes protégées (utilisateurs existants)
-router.post('/send', verificationController.sendVerificationCode);
-router.post('/verify', verificationController.verifyCode);
+router.post('/send', require('../middleware/auth').auth, verificationController.sendVerificationCode);
+router.post('/verify', require('../middleware/auth').auth, verificationController.verifyCode);
 
 // Routes pour la connexion avec OTP
 router.post('/request-login-code', verificationController.requestLoginCode);

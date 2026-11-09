@@ -12,7 +12,7 @@ if (!JWT_SECRET || !JWT_SECRET.trim()) throw new Error('JWT_SECRET est obligatoi
 
 const generateToken = (user) => {
   return jwt.sign(
-    { id: user.id, email: user.email, role: user.role },
+    { id: user.id, email: user.email, role: user.role, version:user.auth_version||0 },
     JWT_SECRET,
     { expiresIn: JWT_EXPIRE }
   );
@@ -20,43 +20,7 @@ const generateToken = (user) => {
 
 const generateCode = () => randomInt(100000, 1000000).toString();
 
-exports.register = async (req, res) => {
-  try {
-    const { email, phone, full_name, password } = req.body;
-
-    const existingUser = await User.findOne({
-      where: { [Op.or]: [{ email }, { phone }] }
-    });
-
-    if (existingUser) {
-      return res.status(400).json({ error: 'Email ou téléphone déjà utilisé' });
-    }
-
-    const user = await User.create({
-      email,
-      phone,
-      full_name,
-      password_hash: password,
-      role: 'organizer'
-    });
-
-    const token = generateToken(user);
-
-    res.status(201).json({
-      message: 'Inscription réussie',
-      token,
-      user: {
-        id: user.id,
-        email: user.email,
-        full_name: user.full_name,
-        role: user.role
-      }
-    });
-  } catch (error) {
-    console.error(error);
-    res.status(500).json({ error: 'Erreur serveur' });
-  }
-};
+exports.register = (req,res) => require('./registrationController').send(req,res);
 
 exports.login = async (req, res) => {
   try {
@@ -101,6 +65,10 @@ exports.me = async (req, res) => {
         full_name: req.user.full_name,
         role: req.user.role,
         balance: req.user.balance_fcfa,
+        balance_fcfa: req.user.balance_fcfa,
+        phone: req.user.phone,
+        avatar_url: req.user.avatar_url,
+        created_at: req.user.created_at,
         is_verified: req.user.is_verified
       }
     });
@@ -127,9 +95,7 @@ exports.requestLoginCode = async (req, res) => {
     const email = user.email;
     const code = generateCode();
     const expiresAt = new Date(Date.now() + 15 * 60 * 1000);
-    await LoginVerification.destroy({
-      where: { email, used: false, expires_at: { [Op.lt]: new Date() } }
-    });
+    await LoginVerification.update({used:true},{where:{email,used:false}});
     const verification = await LoginVerification.create({ email, code, expires_at: expiresAt });
 
     try {
@@ -191,3 +157,33 @@ exports.verifyLoginCode = async (req, res) => {
     res.status(500).json({ error: 'Impossible de vérifier le code. Réessayez plus tard.' });
   }
 };
+
+exports.updateProfile=async(req,res)=>{
+ try{
+  const updates={};
+  if(typeof req.body.full_name!=='string'||req.body.full_name.trim().length<2||req.body.full_name.trim().length>150)return res.status(400).json({error:'Nom : 2 à 150 caractères requis'});
+  updates.full_name=req.body.full_name.trim();
+  if(req.body.avatar_url!==undefined){
+   if(req.body.avatar_url===null)updates.avatar_url=null;
+   else {let url;try{url=new URL(req.body.avatar_url)}catch{return res.status(400).json({error:'Image invalide'})}
+    if(url.protocol!=='https:'||url.hostname!=='res.cloudinary.com'||url.username||url.password)return res.status(400).json({error:'Image invalide'});updates.avatar_url=url.href;}
+  }
+  await req.user.update(updates);return exports.me(req,res);
+ }catch{return res.status(503).json({error:'Profil temporairement indisponible'})}
+};
+exports.changePassword=async(req,res)=>{
+ try{
+  const {current_password,password}=req.body;
+  if(typeof current_password!=='string'||typeof password!=='string'||password.length<8||Buffer.byteLength(password,'utf8')>72)return res.status(400).json({error:'Mot de passe : 8 caractères minimum et 72 octets maximum'});
+  await require('../config/database').transaction(async transaction=>{
+   const user=await User.findByPk(req.user.id,{transaction,lock:transaction.LOCK.UPDATE});
+   if(!user||!await user.validatePassword(current_password))throw Object.assign(new Error('Mot de passe actuel incorrect'),{status:400});
+   await user.update({password_hash:await require('bcryptjs').hash(password,12),auth_version:user.auth_version+1},{transaction});
+   await LoginVerification.update({used:true},{where:{email:user.email,used:false},transaction});
+  });
+  return res.json({message:'Mot de passe modifié. Reconnectez-vous.'});
+ }catch(e){return res.status(e.status||503).json({error:e.status?e.message:'Modification indisponible'})}
+};
+
+// Connexion publique : le mot de passe seul n’ouvre plus de session.
+exports.login=(req,res)=>exports.requestLoginCode(req,res);

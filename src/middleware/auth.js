@@ -13,7 +13,7 @@ const auth = async (req, res, next) => {
     const decoded = jwt.verify(token, env.jwt.secret);
     const user = await User.findByPk(decoded.id);
 
-    if (!user) {
+    if (!user || (decoded.version || 0) !== (user.auth_version || 0)) {
       throw new Error();
     }
 

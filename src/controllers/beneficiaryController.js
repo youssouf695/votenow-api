@@ -9,7 +9,13 @@ const send=require('../services/beneficiaryEmail');
 const fail=(message,status=400)=>Object.assign(new Error(message),{status});
 const uuid=value=>typeof value==='string'&&/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i.test(value);
 function view(row){return {id:row.id,full_name:row.full_name,phone:row.phone,method:row.method,verified_at:row.verified_at,expires_at:row.expires_at,last_sent_at:row.last_sent_at};}
-function respond(res,error){if(error.code==='BENEFICIARY_OTP_NOT_CONFIGURED')console.error('[beneficiary.config]',{code:error.code});return res.status(error.status||503).json({error:error.status?error.message:'Bénéficiaires temporairement indisponibles'});}
+function respond(res,error){
+ const reference=crypto.randomUUID();
+ const sqlState=error.original?.code||error.parent?.code||null;
+ console.error('[beneficiary.error]',{reference,name:error.name,code:error.code||null,sqlState,constraint:error.original?.constraint||null,providerHttpStatus:error.providerHttpStatus||null});
+ const message=error.status?error.message:sqlState==='42P01'||sqlState==='42703'?'Le schéma des bénéficiaires doit être mis à jour. Contactez le support.':'La validation est temporairement indisponible. Communiquez la référence au support.';
+ return res.status(error.status||503).json({error:message,reference});
+}
 async function lockUser(id,transaction){const user=await User.findByPk(id,{transaction,lock:transaction.LOCK.UPDATE});if(!user?.is_verified||!user.email)throw fail('Un compte vérifié avec email est nécessaire',403);return user;}
 async function lockRow(id,userId,transaction){if(!uuid(id))throw fail('Bénéficiaire invalide');const row=await WithdrawalBeneficiary.findOne({where:{id,user_id:userId,deleted_at:null},transaction,lock:transaction.LOCK.UPDATE});if(!row)throw fail('Bénéficiaire introuvable',404);return row;}
 async function challenge(row,user,transaction){
@@ -25,9 +31,8 @@ exports.create=async(req,res)=>{try{
  codes.checkConfiguration();
  if(typeof req.body.full_name!=='string'||req.body.full_name.trim().length<2||req.body.full_name.trim().length>150)throw fail('Nom du bénéficiaire : 2 à 150 caractères');
  const name=req.body.full_name.trim(),phone=normalizePhone(req.body.phone);
- const predicted=await kpay.predictProvider(phone);
- const method={MTN_MOMO_CMR:'mtn_momo',ORANGE_CMR:'orange_money'}[predicted.provider];
- if(predicted.country!=='CMR'||!method)throw fail('Numéro Mobile Money camerounais non pris en charge',422);
+ const method=req.body.method;
+ if(!['mtn_momo','orange_money'].includes(method))throw fail('Choisissez MTN Mobile Money ou Orange Money.');
  const result=await sequelize.transaction(async transaction=>{
   const user=await lockUser(req.user.id,transaction);
   if(await WithdrawalBeneficiary.count({where:{user_id:user.id,deleted_at:null},transaction})>=3)throw fail('Vous pouvez enregistrer au maximum trois bénéficiaires, y compris ceux en attente de validation.',409);

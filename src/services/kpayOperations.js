@@ -67,7 +67,7 @@ async function applyEvent(event, internal = false) {
             lock: transaction.LOCK.UPDATE
         });
         if (!operation) throw failure('Opération inconnue', 404);
-        if (operation.kind !== prefix || operation.environment !== getConfig().mode) throw failure('Opération incohérente');
+        if ((operation.kind !== prefix && !(operation.kind==='WALLET_TOPUP'&&prefix==='DEPOSIT')) || operation.environment !== getConfig().mode) throw failure('Opération incohérente');
         if (Number(event.amount) !== operation.expected_amount || (event.currency && event.currency !== 'XAF')) throw failure('Montant ou devise incohérent');
         if (typeof event.isTest === 'boolean' && event.isTest !== (operation.environment === 'sandbox')) throw failure('Environnement incohérent');
         if (event.phoneNumber && operation.request_payload.phoneNumber && normalizePhone(event.phoneNumber) !== operation.request_payload.phoneNumber) throw failure('Bénéficiaire incohérent');
@@ -94,7 +94,18 @@ async function applyEvent(event, internal = false) {
         const fee = optionalAmount(event.feeAmount), net = optionalAmount(event.netAmount);
         if (fee !== null) details.provider_fee = fee;
         if (net !== null) details.provider_net = net;
-        if (prefix === 'DEPOSIT') {
+        if (operation.kind === 'WALLET_TOPUP') {
+            const {WalletTopup,WalletEntry}=require('../models/Wallet');
+            const topup=await WalletTopup.findByPk(operation.domain_id,{transaction,lock:transaction.LOCK.UPDATE});
+            if(!topup||topup.status!=='pending')throw failure('Recharge déjà finalisée ou absente',409);
+            if(expected==='COMPLETED'){
+                const delivered=net??optionalAmount(operation.provider_net);
+                if(delivered===null){await operation.update({...details,status:'AWAITING_DETAILS',error_code:'NET_AMOUNT_MISSING'},{transaction});return operation;}
+                if(delivered!==topup.amount_fcfa){await operation.update({...details,status:'RECONCILIATION',error_code:'NET_AMOUNT_MISMATCH'},{transaction});return operation;}
+                await WalletEntry.create({wallet_id:topup.wallet_id,amount_delta:topup.amount_fcfa,balance_after:0,source_kind:'topup',source_id:topup.id},{transaction});
+                await topup.update({status:'success',completed_at:new Date()},{transaction});
+            }else await topup.update({status:'failed',completed_at:new Date()},{transaction});
+        } else if (prefix === 'DEPOSIT') {
             const payment = await Payment.findByPk(operation.domain_id, {transaction, lock: transaction.LOCK.UPDATE});
             if (!payment) throw new Error('Paiement local absent');
             if (payment.status !== 'pending') {
@@ -203,6 +214,8 @@ async function dispatch(operationId) {
     const operation = await sequelize.transaction(async transaction => {
         const row = await KpayOperation.findByPk(operationId, {transaction, lock: transaction.LOCK.UPDATE});
         if (!row || row.status !== 'CREATED') return null;
+        if(row.environment!==getConfig().mode)throw failure('Cette tentative appartient à un autre environnement de paiement.',409);
+        if(!['DEPOSIT','PAYOUT','WALLET_TOPUP'].includes(row.kind))throw failure('Type d’opération inconnu',409);
         if (row.kind === 'PAYOUT') {
             const withdrawal = await Withdrawal.findByPk(row.domain_id, {transaction, lock: transaction.LOCK.UPDATE});
             if (withdrawal?.fee_policy === 'recipient_pays_v2') {
@@ -226,7 +239,7 @@ async function dispatch(operationId) {
     if (!operation) return;
     let result;
     try {
-        result = operation.kind === 'DEPOSIT' ? await client.initiatePayment(operation.request_payload) : await client.initiateWithdrawal(operation.request_payload);
+        result = ['DEPOSIT','WALLET_TOPUP'].includes(operation.kind) ? await client.initiatePayment(operation.request_payload) : await client.initiateWithdrawal(operation.request_payload);
     } catch (error) {
         console.error('[kpay.dispatch]', {
             operationId: operation.id,
@@ -241,7 +254,7 @@ async function dispatch(operationId) {
 
         if (error.definitive) {
             await applyEvent({
-                event: operation.kind === 'DEPOSIT' ? 'payment.failed' : 'payout.failed',
+                event: operation.kind === 'PAYOUT' ? 'payout.failed' : 'payment.failed',
                 status: 'FAILED',
                 externalId: operation.external_id,
                 paymentId: operation.provider_id || 'init-rejected',
@@ -273,7 +286,7 @@ async function dispatch(operationId) {
         }
         const changes = {provider_id: result.id, provider_reference: result.reference || null};
         // L'URL n'est jamais une preuve de paiement. Seul le webhook signé crédite les votes.
-        if (row.kind === 'DEPOSIT' && (result.mode === 'GATEWAY' || result.gatewayUrl)) {
+        if (['DEPOSIT','WALLET_TOPUP'].includes(row.kind) && (result.mode === 'GATEWAY' || result.gatewayUrl)) {
             let checkout;
             try {
                 checkout = new URL(result.gatewayUrl);
@@ -305,7 +318,7 @@ const lastLookup = new Map();
 
 async function reconcileDeposit(operationId) {
     const operation = await KpayOperation.findByPk(operationId);
-    if (!operation || operation.kind !== 'DEPOSIT' || !operation.provider_id ||
+    if (!operation || !['DEPOSIT','WALLET_TOPUP'].includes(operation.kind) || !operation.provider_id ||
         !['PENDING', 'UNKNOWN', 'INITIATING'].includes(operation.status)) return;
     const now = Date.now();
     if (now - (lastLookup.get(operationId) || 0) < 15000) return;
@@ -356,5 +369,3 @@ async function reconcileDeposit(operationId) {
 }
 
 module.exports = {hash, payoutQuote, dispatch, applyEvent, optionalAmount, failure, reconcileDeposit};
-
-
