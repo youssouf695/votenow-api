@@ -1,0 +1,11 @@
+const router=require('express').Router(),service=require('../services/transactionAudit');
+const {rateLimit}=require('../middleware/rateLimit');
+const run=fn=>async(req,res)=>{res.set('Cache-Control','no-store');try{res.json(await fn(req))}catch(error){console.error('[admin.transactions]',{code:error.original?.code||error.code||null});res.status(error.status||503).json({error:error.status?error.message:'Transactions temporairement indisponibles.'})}};
+router.get('/',run(req=>service.list(req.query)));
+router.get('/options',run(req=>service.options(req.query)));
+router.get('/journal',run(req=>service.journal(req.query)));
+router.get('/accounts/:id',run(req=>service.account(req.params.id)));
+router.post('/accounts/:id/restriction',rateLimit({scope:'admin-account-control',limit:20,seconds:3600,identify:req=>req.user.id}),run(req=>service.restrict(req.user,req.params.id,req.body)));
+router.get('/:type/:id',run(req=>service.detail(req.params.type,req.params.id)));
+router.post('/:type/:id/verify',rateLimit({scope:'admin-kpay-verify',limit:6,seconds:60,identify:req=>`${req.user.id}:${req.params.id}`}),run(req=>service.verify(req.user,req.params.type,req.params.id,req.body)));
+module.exports=router;

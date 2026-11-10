@@ -23,6 +23,8 @@ async function startServer() {
   try {
     await sequelize.authenticate();
     console.log('Connexion à PostgreSQL établie');
+    await sequelize.query('SELECT 1 FROM campaign_setups LIMIT 1'); // scripts/migrate-campaign-setup.js --apply
+    await sequelize.query('SELECT 1 FROM transaction_admin_actions LIMIT 1'); // Exécuter scripts/migrate-transactions.js --apply avant démarrage.
     
     // Les changements de schéma doivent être appliqués séparément.
     // Ne pas modifier les tables métier à chaque démarrage.
@@ -53,4 +55,3 @@ async function startServer() {
 }
 
 startServer();
-

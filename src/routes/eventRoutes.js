@@ -15,6 +15,12 @@ router.get('/public/id/:id', eventController.getPublicEventById); // ← Nouvell
 // ==================== ROUTES PROTÉGÉES ====================
 // Toutes les routes après auth nécessitent une authentification
 router.use(auth);
+const setupController=require('../controllers/campaignSetupController');
+router.post('/setup',authorize('organizer','admin'),setupController.create);
+router.get('/:id/setup',authorize('organizer','admin'),setupController.get);
+router.put('/:id/setup',authorize('organizer','admin'),setupController.save);
+router.post('/:id/setup/restart',authorize('organizer','admin'),setupController.restart);
+router.post('/:id/setup/publish',authorize('organizer','admin'),setupController.publish);
 const campaignController = require('../controllers/campaignController');
 const campaignAssets = require('../controllers/campaignAssetController');
 const { rateLimit } = require('../middleware/rateLimit');
@@ -100,4 +106,3 @@ router.delete('/candidates/:candidateId',
 );
 
 module.exports = router;
-

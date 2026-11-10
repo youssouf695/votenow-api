@@ -2,6 +2,7 @@ const express = require('express');
 const verificationController = require('../controllers/verificationController');
 
 const router = express.Router();
+router.use(require('../middleware/loginRestriction'));
 
 // Routes publiques (pré-inscription)
 router.post('/send-pre-registration-code', verificationController.sendPreRegistrationCode);

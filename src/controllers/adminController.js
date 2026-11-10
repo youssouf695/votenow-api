@@ -349,6 +349,9 @@ exports.updateEvent = async (req, res) => {
 
     if (event.archived_at) return res.status(409).json({ error: 'Campagne archivée : historique conservé, modification interdite.' });
     const updates = {};
+    if(status==='draft'&&event.status!=='draft')return res.status(409).json({error:'Une campagne déjà publiée peut être mise en pause ou clôturée, pas remise en création.'});
+    if(status==='active'){const [unfinished]=await sequelize.query('SELECT event_id FROM campaign_setups WHERE event_id=:id AND published_at IS NULL',{replacements:{id:event.id}});if(unfinished.length)return res.status(409).json({error:'Le parcours de création doit être terminé avant publication.'});}
+    if(event.status==='draft'&&status==='active')return res.status(409).json({error:'La publication doit être effectuée par le parcours de création de la campagne.'});
     if (status          !== undefined) updates.status          = status;
     if (commission_rate !== undefined) updates.commission_rate = commission_rate;
     if (vote_price_fcfa !== undefined) {
@@ -538,4 +541,3 @@ exports.getPlatformStats = async (req, res) => {
     res.status(500).json({ error: error.message });
   }
 };
-

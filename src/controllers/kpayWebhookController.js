@@ -14,7 +14,11 @@ async function handleWebhook(req, res) {
     if (!/^(payment|payout)\.(completed|failed|cancelled)$/.test(event.event || '')) return res.status(200).json({ received: true });
     const header = req.get('X-KPAY-Event');
     if (header && header !== event.event) return res.status(400).json({ error: 'Notification incohérente' });
-    await applyEvent(event);
+    const {recordReceipt}=require('../services/transactionAudit');
+    const digest=crypto.createHash('sha256').update(req.body).digest('hex');
+    await recordReceipt(digest,event,'received');
+    try{await applyEvent(event);await recordReceipt(digest,event,'applied',false)}
+    catch(error){await recordReceipt(digest,event,'rejected',false);throw error}
     return res.status(200).json({ received: true });
   } catch (error) {
     // Une erreur transactionnelle renvoie 500 : KPay peut rejouer la notification.

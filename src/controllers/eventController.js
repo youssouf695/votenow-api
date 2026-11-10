@@ -147,6 +147,7 @@ exports.getMyEvents = async (req, res) => {
       offset
     });
 
+    if(events.rows.length){const [progress]=await sequelize.query('SELECT event_id,step,completed,revision,published_at,data FROM campaign_setups WHERE event_id IN (:ids)',{replacements:{ids:events.rows.map(e=>e.id)}});for(const e of events.rows){const p=progress.find(p=>p.event_id===e.id);if(p&&!p.published_at&&e.status==='draft'){e.setDataValue('setup_progress',{step:p.step,completed:p.completed,revision:p.revision});e.setDataValue('title',p.data.basics.title.trim()||e.title);e.setDataValue('cover_image_url',p.data.basics.cover_image_url||null);e.setDataValue('avatar_url',p.data.basics.avatar_url||null);}}}
     res.json({
       events: events.rows,
       total: events.count,
@@ -294,7 +295,11 @@ exports.publishEvent = async (req, res) => {
       return res.status(400).json({ error: `Impossible de publier un événement "${event.status}"` });
     }
 
-    const candidateCount = await Candidate.count({ where: { event_id: event.id } });
+    const [setupRows]=await sequelize.query('SELECT event_id FROM campaign_setups WHERE event_id=:id',{replacements:{id:event.id}});
+    if(setupRows.length)return res.status(409).json({error:'Terminez les cinq étapes de création pour publier cette campagne.'});
+    const groups=await CampaignCategory.findAll({where:{event_id:event.id}});
+    for(const group of groups){if(await Candidate.count({where:{event_id:event.id,category_id:group.id,is_active:true}})<2)return res.status(400).json({error:`Ajoutez au moins deux candidats actifs dans « ${group.name} ».`});}
+    const candidateCount = await Candidate.count({ where: { event_id: event.id,is_active:true } });
     if (candidateCount < 2) {
       return res.status(400).json({ error: 'Ajoutez au moins 2 candidats avant de publier' });
     }
@@ -509,7 +514,7 @@ exports.getEventRanking = async (req, res) => {
     const { slug } = req.params;
 
     const event = await Event.findOne({
-      where: { slug },
+      where: { slug,status:{[Op.in]:['active','closed']},archived_at:null },
       attributes: ['id', 'title', 'show_results', 'status']
     });
 
@@ -542,6 +547,3 @@ exports.getEventRanking = async (req, res) => {
     res.status(error.status || 500).json({ error: error.status ? error.message : 'Opération de campagne indisponible' });
   }
 };
-
-
-

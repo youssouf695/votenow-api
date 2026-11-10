@@ -17,6 +17,8 @@ const auth = async (req, res, next) => {
       throw new Error();
     }
 
+    const [restrictions]=await require('../config/database').query('SELECT suspended FROM user_restrictions WHERE user_id=:id',{replacements:{id:user.id}});
+    if(restrictions[0]?.suspended)return res.status(403).json({error:'Compte suspendu. Contactez le support VoteNow.',code:'ACCOUNT_SUSPENDED'});
     req.user = user;
     req.token = token;
     next();

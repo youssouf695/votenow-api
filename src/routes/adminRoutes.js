@@ -8,6 +8,7 @@ const router = express.Router();
 // Toutes les routes admin nécessitent authentification et rôle admin
 router.use(auth);
 router.use(authorize('admin'));
+router.use('/transactions', require('./transactionRoutes'));
 
 // ==================== DASHBOARD ====================
 

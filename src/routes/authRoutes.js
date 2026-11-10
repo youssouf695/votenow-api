@@ -3,6 +3,7 @@ const authController = require('../controllers/authController');
 const { auth } = require('../middleware/auth');
 
 const router = express.Router();
+router.use(require('../middleware/loginRestriction'));
 
 router.post('/register', authController.register);
 router.post('/login', authController.login);
