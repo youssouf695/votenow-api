@@ -1,0 +1,8 @@
+const {test}=require('node:test'),assert=require('node:assert/strict');
+const {configuration}=require('../src/services/campaignImageUpload'),{settings}=require('../src/services/campaignSettings');
+test('server image configuration accepts explicit credentials or the standard URL, trims paste whitespace, and reports missing names only',()=>{
+ assert.deepEqual(configuration({}).missing,['CLOUDINARY_CLOUD_NAME','CLOUDINARY_API_KEY','CLOUDINARY_API_SECRET']);
+ const c=configuration({CLOUDINARY_CLOUD_NAME:' demo ',CLOUDINARY_API_KEY:' key ',CLOUDINARY_API_SECRET:' secret '});assert.equal(c.ready,true);assert.equal(c.cloud,'demo');assert.equal(c.secret,'secret');
+ const url=configuration({CLOUDINARY_URL:'cloudinary://key:secret%2Bvalue@demo'});assert.equal(url.ready,true);assert.equal(url.secret,'secret+value');assert.equal(configuration({CLOUDINARY_URL:'https://example.invalid'}).ready,false);assert.equal(configuration({CLOUDINARY_CLOUD_NAME:'../../host',CLOUDINARY_API_KEY:'key',CLOUDINARY_API_SECRET:'secret'}).ready,false);
+});
+test('gradient settings persist typed stops and angle, with safe defaults for old campaigns',()=>{const c=settings({template_id:'editorial',hero_gradient_enabled:true,hero_gradient_from:'#234567',hero_gradient_to:'#6789ab',hero_gradient_angle:225});assert.equal(c.hero_gradient_angle,225);assert.equal(c.hero_gradient_enabled,true);assert.equal(c.hero_gradient_from,'#234567');assert.equal(settings({template_id:'editorial'}).hero_gradient_enabled,false);for(const patch of [{hero_gradient_from:'url(https://evil.invalid)'},{hero_gradient_angle:361},{hero_gradient_angle:'90'},{hero_gradient_enabled:'true'}])assert.throws(()=>settings({template_id:'editorial',...patch}),{status:400});});

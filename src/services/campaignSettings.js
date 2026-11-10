@@ -21,7 +21,12 @@ function settings(input) {
     if (typeof value !== 'string' || !/^#[a-f0-9]{6}$/i.test(value)) throw invalid('Couleur invalide');
     result[key] = value;
   }
+  if(input.hero_gradient_enabled!==undefined&&typeof input.hero_gradient_enabled!=='boolean')throw invalid('Dégradé invalide');
+  result.hero_gradient_enabled=input.hero_gradient_enabled===true;
+  for(const key of ['hero_gradient_from','hero_gradient_to']){const value=input[key]||result.accent;if(typeof value!=='string'||!/^#[a-f0-9]{6}$/i.test(value))throw invalid('Couleur de dégradé invalide');result[key]=value;}
+  result.hero_gradient_angle=input.hero_gradient_angle??120;if(!Number.isInteger(result.hero_gradient_angle)||result.hero_gradient_angle<0||result.hero_gradient_angle>360)throw invalid('Angle de dégradé invalide');
   for (const [key, allowed, fallback] of [
+    ['stats_style',['strip','cards','orbit','scoreboard'],template.stats_style||'strip'],
     ['candidate_layout',['split-left','split-right','immersive'],template.candidate_layout||'split-left'],
     ['card_motion',['none','lift','zoom','reveal','spotlight'],template.card_motion||'lift'],
     ['shape',['square','rounded','round','portrait','arch','landscape'],template.shape],
@@ -35,7 +40,7 @@ function settings(input) {
     ['sound',['none','calm','bright','soft','sparkle','fanfare','marimba','pulse','chime','celebrate'],'none'],
   ]) { const value=input[key] || fallback; if (!allowed.includes(value)) throw invalid(`${key} invalide`); result[key]=value; }
   for (const key of ['show_ranking','show_counts']) { if (input[key] !== undefined && typeof input[key] !== 'boolean') throw invalid(`${key} invalide`); result[key] = input[key] !== false; }
-  for(const key of ['show_podium','show_leader','show_categories','show_slogan','show_category_labels','show_vote_button','show_share_button','show_candidate_number','show_hero_stats']) {
+  for(const key of ['show_podium','show_leader','show_categories','show_slogan','show_category_labels','show_vote_button','show_share_button','show_candidate_number','show_hero_stats','show_countdown']) {
     if(input[key]!==undefined&&typeof input[key]!=='boolean')throw invalid(`${key} invalide`);
     result[key]=typeof input[key]==='boolean'?input[key]:template[key]!==false;
   }
