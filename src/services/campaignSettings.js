@@ -22,6 +22,8 @@ function settings(input) {
     result[key] = value;
   }
   for (const [key, allowed, fallback] of [
+    ['candidate_layout',['split-left','split-right','immersive'],template.candidate_layout||'split-left'],
+    ['card_motion',['none','lift','zoom','reveal','spotlight'],template.card_motion||'lift'],
     ['shape',['square','rounded','round','portrait','arch','landscape'],template.shape],
     ['font',['sans','serif'],template.font],
     ['shadow',['none','soft','dramatic','glow'],template.shadow||'soft'],
@@ -37,6 +39,8 @@ function settings(input) {
     if(input[key]!==undefined&&typeof input[key]!=='boolean')throw invalid(`${key} invalide`);
     result[key]=typeof input[key]==='boolean'?input[key]:template[key]!==false;
   }
+  if(input.candidate_background!==undefined&&typeof input.candidate_background!=='boolean')throw invalid('candidate_background invalide');
+  result.candidate_background=typeof input.candidate_background==='boolean'?input.candidate_background:template.candidate_background===true;
   const overlay=input.hero_overlay??template.hero_overlay;
   if(!Number.isInteger(overlay)||overlay<35||overlay>85)throw invalid('Opacité de couverture invalide');
   result.hero_overlay=overlay;
@@ -73,4 +77,3 @@ function partners(input) {
   return input.map(row=>({name:text(row.name,150,'Nom partenaire',true),logo_url:safeUrl(row.logo_url,'Logo'),website:safeUrl(row.website,'Site partenaire'),contact:text(row.contact ?? '',200,'Contact partenaire')}));
 }
 module.exports={settings,categories,partners,safeUrl};
-

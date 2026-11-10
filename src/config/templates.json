@@ -25,7 +25,10 @@
     "show_vote_button": false,
     "show_share_button": false,
     "show_candidate_number": false,
-    "show_hero_stats": true
+    "show_hero_stats": true,
+    "candidate_layout": "split-left",
+    "candidate_background": false,
+    "card_motion": "lift"
   },
   {
     "id": "cinema",
@@ -53,7 +56,10 @@
     "show_vote_button": false,
     "show_share_button": false,
     "show_candidate_number": false,
-    "show_hero_stats": true
+    "show_hero_stats": true,
+    "candidate_layout": "split-right",
+    "candidate_background": false,
+    "card_motion": "zoom"
   },
   {
     "id": "minimal",
@@ -81,7 +87,10 @@
     "show_vote_button": false,
     "show_share_button": false,
     "show_candidate_number": false,
-    "show_hero_stats": true
+    "show_hero_stats": true,
+    "candidate_layout": "immersive",
+    "candidate_background": true,
+    "card_motion": "reveal"
   },
   {
     "id": "arena",
@@ -109,7 +118,10 @@
     "show_vote_button": false,
     "show_share_button": false,
     "show_candidate_number": false,
-    "show_hero_stats": true
+    "show_hero_stats": true,
+    "candidate_layout": "split-left",
+    "candidate_background": false,
+    "card_motion": "spotlight"
   },
   {
     "id": "gala",
@@ -137,7 +149,10 @@
     "show_vote_button": false,
     "show_share_button": false,
     "show_candidate_number": false,
-    "show_hero_stats": true
+    "show_hero_stats": true,
+    "candidate_layout": "split-right",
+    "candidate_background": false,
+    "card_motion": "none"
   },
   {
     "id": "mosaic",
@@ -165,7 +180,10 @@
     "show_vote_button": false,
     "show_share_button": false,
     "show_candidate_number": false,
-    "show_hero_stats": true
+    "show_hero_stats": true,
+    "candidate_layout": "immersive",
+    "candidate_background": true,
+    "card_motion": "lift"
   },
   {
     "id": "studio",
@@ -193,7 +211,10 @@
     "show_vote_button": false,
     "show_share_button": false,
     "show_candidate_number": false,
-    "show_hero_stats": true
+    "show_hero_stats": true,
+    "candidate_layout": "split-left",
+    "candidate_background": false,
+    "card_motion": "zoom"
   },
   {
     "id": "festival",
@@ -221,7 +242,10 @@
     "show_vote_button": false,
     "show_share_button": false,
     "show_candidate_number": false,
-    "show_hero_stats": true
+    "show_hero_stats": true,
+    "candidate_layout": "split-right",
+    "candidate_background": false,
+    "card_motion": "reveal"
   },
   {
     "id": "corporate",
@@ -249,7 +273,10 @@
     "show_vote_button": false,
     "show_share_button": false,
     "show_candidate_number": false,
-    "show_hero_stats": true
+    "show_hero_stats": true,
+    "candidate_layout": "immersive",
+    "candidate_background": true,
+    "card_motion": "spotlight"
   },
   {
     "id": "community",
@@ -277,6 +304,9 @@
     "show_vote_button": false,
     "show_share_button": false,
     "show_candidate_number": false,
-    "show_hero_stats": true
+    "show_hero_stats": true,
+    "candidate_layout": "split-left",
+    "candidate_background": false,
+    "card_motion": "none"
   }
 ]
