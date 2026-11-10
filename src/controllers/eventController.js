@@ -478,6 +478,8 @@ exports.deleteCandidate = async (req, res) => {
       return res.json({ message: 'Candidat désactivé (avait des votes)' });
     }
 
+    const [applications]=await sequelize.query('SELECT 1 FROM campaign_applications WHERE candidate_id=:id LIMIT 1',{replacements:{id:candidate.id}});
+    if(applications.length)return res.status(409).json({error:'Ce candidat provient d’une candidature approuvée. Désactivez-le pour conserver le dossier.'});
     await candidate.destroy();
     res.json({ message: 'Candidat supprimé avec succès' });
 

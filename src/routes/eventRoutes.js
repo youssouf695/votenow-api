@@ -4,6 +4,14 @@ const eventController = require('../controllers/eventController');
 const { auth, authorize } = require('../middleware/auth');
 
 const router = express.Router();
+const applications=require('../controllers/campaignApplicationController');
+const {rateLimit:applicationLimit}=require('../middleware/rateLimit');
+const publicLimit=(scope,limit)=>applicationLimit({scope,limit,seconds:3600,identify:req=>req.ip});
+router.get('/public/:slug/registration',applications.publicForm);
+router.post('/public/:slug/application-upload',publicLimit('application-ticket',60),applications.ticket);
+router.post('/public/:slug/application-upload/:uploadId',publicLimit('application-photo',60),express.raw({type:['image/jpeg','image/png','image/webp'],limit:'5mb'}),applications.upload);
+router.post('/public/:slug/applications',publicLimit('application-submit',60),applications.submit);
+
 
 // ==================== ROUTES PUBLIQUES ====================
 // Accessibles sans authentification
@@ -15,6 +23,10 @@ router.get('/public/id/:id', eventController.getPublicEventById); // ← Nouvell
 // ==================== ROUTES PROTÉGÉES ====================
 // Toutes les routes après auth nécessitent une authentification
 router.use(auth);
+router.get('/:id/applications',authorize('organizer','admin'),applications.list);
+router.get('/:id/applications/:applicationId',authorize('organizer','admin'),applications.detail);
+router.post('/:id/applications/:applicationId/review',authorize('organizer','admin'),applicationLimit({scope:'application-review',limit:150,seconds:3600,identify:req=>req.user.id}),applications.review);
+router.put('/:id/registration',authorize('organizer','admin'),applications.configure);
 const setupController=require('../controllers/campaignSetupController');
 router.post('/setup',authorize('organizer','admin'),setupController.create);
 router.get('/:id/setup',authorize('organizer','admin'),setupController.get);

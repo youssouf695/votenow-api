@@ -16,6 +16,10 @@ const subscriptionRoutes = require('./routes/subscriptionRoutes');
 const verificationRoutes = require('./routes/verificationRoutes'); // ← AJOUT
 
 const app = express();
+// Fixer le nombre de proxys de confiance depuis l’environnement, jamais depuis un en-tête client.
+const proxyHops=process.env.TRUST_PROXY_HOPS||'0';
+if(!/^[0-3]$/.test(proxyHops))throw new Error('TRUST_PROXY_HOPS invalide (0 à 3).');
+app.set('trust proxy',Number(proxyHops));
 
 // Middleware
 app.use(helmet());

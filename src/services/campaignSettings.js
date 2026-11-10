@@ -69,7 +69,7 @@ function categories(input) {
     if (names.has(name.toLowerCase())) throw invalid('Catégorie dupliquée'); names.add(name.toLowerCase());
     const id=row.id || crypto.randomUUID();
     if (!/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i.test(id) || ids.has(id)) throw invalid('Identifiant catégorie invalide'); ids.add(id);
-    return {id,name,position:index};
+    return {id,name,position:index,cover_image_url:safeUrl(row.cover_image_url,'Couverture catégorie'),avatar_url:safeUrl(row.avatar_url,'Profil catégorie')};
   });
 }
 function partners(input) {

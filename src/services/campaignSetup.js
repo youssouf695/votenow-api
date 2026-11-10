@@ -9,11 +9,13 @@ function object(v){return v&&typeof v==='object'&&!Array.isArray(v)}
 function normalize(input){
  if(!object(input)||!object(input.basics)||!object(input.content))throw fail('Informations du parcours invalides');
  const b=input.basics;
+ const registration=require('./registrationForm');
+ const mode=b.candidate_mode||'manual';if(!['manual','registration'].includes(mode))throw fail('Type de campagne invalide');
  for(const key of ['allow_anonymous','show_results'])if(b[key]!==undefined&&typeof b[key]!=='boolean')throw fail('Option de campagne invalide');
  const price=b.vote_price_fcfa==null||b.vote_price_fcfa===''?null:Number(b.vote_price_fcfa);
  if(price!==null&&(!Number.isSafeInteger(price)||price<0||price>10000))throw fail('Prix du vote invalide');
- const basics={title:str(b.title,200,'Titre'),description:str(b.description,10000,'Description'),vote_price_fcfa:price,cover_image_url:str(b.cover_image_url,2048,'Couverture'),avatar_url:str(b.avatar_url,2048,'Image de profil'),starts_at:str(b.starts_at,50,'Début'),ends_at:str(b.ends_at,50,'Fin'),allow_anonymous:b.allow_anonymous!==false,show_results:b.show_results!==false};
- const categories=rows(input.categories,100,'Catégories').map((g,i)=>{if(!object(g)||!uuid(g.id))throw fail('Identifiant de catégorie invalide');return {id:g.id,name:str(g.name,100,'Catégorie'),position:i}});
+ const basics={candidate_mode:mode,registration_config:registration.config(b.registration_config||{}),title:str(b.title,200,'Titre'),description:str(b.description,10000,'Description'),vote_price_fcfa:price,cover_image_url:str(b.cover_image_url,2048,'Couverture'),avatar_url:str(b.avatar_url,2048,'Image de profil'),starts_at:str(b.starts_at,50,'Début'),ends_at:str(b.ends_at,50,'Fin'),allow_anonymous:b.allow_anonymous!==false,show_results:b.show_results!==false};
+ const categories=rows(input.categories,100,'Catégories').map((g,i)=>{if(!object(g)||!uuid(g.id))throw fail('Identifiant de catégorie invalide');return {id:g.id,name:str(g.name,100,'Catégorie'),cover_image_url:str(g.cover_image_url,2048,'Couverture catégorie'),avatar_url:str(g.avatar_url,2048,'Profil catégorie'),position:i}});
  if(new Set(categories.map(g=>g.id)).size!==categories.length)throw fail('Catégories dupliquées');
  const candidates=rows(input.candidates,500,'Candidats').map((c,i)=>{
   if(!object(c)||!uuid(c.id)||(c.category_id&&!uuid(c.category_id)))throw fail('Identifiant de candidat ou catégorie invalide');
@@ -24,7 +26,7 @@ function normalize(input){
  });
  if(new Set(candidates.map(c=>c.id)).size!==candidates.length)throw fail('Candidats dupliqués');
  const content={header_text:str(input.content.header_text,240,'Message d’accueil'),footer_text:str(input.content.footer_text,500,'Pied de page'),partners:rows(input.content.partners,100,'Partenaires').map(p=>{if(!object(p))throw fail('Partenaire invalide');return {name:str(p.name,150,'Nom partenaire'),logo_url:str(p.logo_url,2048,'Logo'),website:str(p.website,2048,'Site partenaire'),contact:str(p.contact,200,'Contact partenaire')}})};
- const data={basics,categories,candidates,content};
+ const data={basics,categories,candidates,content,presentation:input.presentation?validate.settings(input.presentation):null};
  if(Buffer.byteLength(JSON.stringify(data))>90000)throw fail('La configuration dépasse la taille autorisée (90 Ko)');return data;
 }
 function validateThrough(data,step,maxCandidates=null,now=Date.now()){
@@ -38,6 +40,7 @@ function validateThrough(data,step,maxCandidates=null,now=Date.now()){
  if(step>=2)validate.categories(data.categories);
  if(step>=3){
   if(maxCandidates&&data.candidates.length>maxCandidates)throw fail(`Étape 3 : maximum ${maxCandidates} candidats pour cette campagne.`);
+  if(b.candidate_mode==='registration')require('./registrationForm').config(b.registration_config,true);
   const numbers=new Set();
   for(const c of data.candidates){
    if(c.name.trim().length<2)throw fail('Étape 3 : chaque candidat doit avoir un nom de 2 caractères minimum.');
@@ -47,8 +50,8 @@ function validateThrough(data,step,maxCandidates=null,now=Date.now()){
    if(!data.categories.length&&c.category_id)throw fail('Étape 3 : catégorie de candidat absente.');
   }
   const active=data.candidates.filter(c=>c.is_active);
-  if(!data.categories.length&&active.length<2)throw fail('Étape 3 : ajoutez au moins deux candidats actifs.');
-  for(const g of data.categories)if(active.filter(c=>c.category_id===g.id).length<2)throw fail(`Étape 3 : ajoutez au moins deux candidats actifs dans « ${g.name} ».`);
+  if(b.candidate_mode!=='registration'&&!data.categories.length&&active.length<2)throw fail('Étape 3 : ajoutez au moins deux candidats actifs.');
+  for(const g of data.categories)if(b.candidate_mode!=='registration'&&active.filter(c=>c.category_id===g.id).length<2)throw fail(`Étape 3 : ajoutez au moins deux candidats actifs dans « ${g.name} ».`);
  }
  if(step>=4)validate.partners(data.content.partners);
  return data;
@@ -62,7 +65,7 @@ async function source(id,user,transaction){
  const hash=crypto.createHash('sha256').update(JSON.stringify([event.toJSON(),categories.map(r=>r.toJSON()),candidates.map(r=>r.toJSON())])).digest('hex');
  return {event,categories,candidates,hash};
 }
-function initial(s){const e=s.event.toJSON();return normalize({basics:{...e,starts_at:e.starts_at?.toISOString?.()||e.starts_at||'',ends_at:e.ends_at?.toISOString?.()||e.ends_at||''},categories:s.categories.map(g=>g.toJSON()),candidates:s.candidates.map(c=>c.toJSON()),content:{header_text:e.site_config?.header_text||'',footer_text:e.site_config?.footer_text||'',partners:e.partners||[]}})}
+function initial(s){const e=s.event.toJSON();return normalize({basics:{...e,starts_at:e.starts_at?.toISOString?.()||e.starts_at||'',ends_at:e.ends_at?.toISOString?.()||e.ends_at||''},categories:s.categories.map(g=>g.toJSON()),candidates:s.candidates.map(c=>c.toJSON()),presentation:e.site_config,content:{header_text:e.site_config?.header_text||'',footer_text:e.site_config?.footer_text||'',partners:e.partners||[]}})}
 const selectSetup=(id,transaction,lock=false)=>query(`SELECT * FROM campaign_setups WHERE event_id=:id${lock?' FOR UPDATE':''}`,{id},transaction).then(r=>r[0]);
 async function snapshot(s,row){return {event:{id:s.event.id,title:s.event.title,slug:s.event.slug,status:s.event.status,site_config:s.event.site_config,site_version:s.event.site_version,max_candidates:s.event.max_candidates},setup:{step:row.step,completed:row.completed,revision:row.revision,saved_at:row.updated_at,source_changed:row.source_hash!==s.hash},data:row.data}}
 async function get(user,id){if(!uuid(id))throw fail('Campagne invalide');return db.transaction(async transaction=>{
@@ -117,7 +120,7 @@ async function publish(user,id,input){if(!uuid(id))throw fail('Campagne invalide
  if(removed.length)await Candidate.destroy({where:{id:{[Op.in]:removed.map(c=>c.id)},event_id:id},transaction});
  for(const c of data.candidates){const updates={...c,name:c.name.trim(),photo_url:c.photo_url||null,slogan:c.slogan.trim()||null,bio:c.bio||null,event_id:id};if(s.candidates.some(old=>old.id===c.id))await Candidate.update(updates,{where:{id:c.id,event_id:id},transaction});else await Candidate.create(updates,{transaction});}
  const removedGroups=s.categories.filter(c=>!data.categories.some(next=>next.id===c.id));if(removedGroups.length)await CampaignCategory.destroy({where:{id:{[Op.in]:removedGroups.map(g=>g.id)},event_id:id},transaction});
- const b=data.basics,config=validate.settings({...s.event.site_config,template_id:s.event.site_config?.template_id||'editorial',header_text:data.content.header_text,footer_text:data.content.footer_text});
+ const b=data.basics,config=validate.settings({...s.event.site_config,...(data.presentation||{}),template_id:data.presentation?.template_id||s.event.site_config?.template_id||'editorial',header_text:data.content.header_text,footer_text:data.content.footer_text});
  await query('UPDATE campaign_setups SET step=5,completed=5,published_at=now(),revision=revision+1,updated_at=now() WHERE event_id=:id',{id},transaction);
  await s.event.update({...b,title:b.title.trim(),description:b.description||null,cover_image_url:b.cover_image_url||null,avatar_url:b.avatar_url||null,starts_at:b.starts_at||new Date(),ends_at:b.ends_at||null,site_config:config,partners:validate.partners(data.content.partners),status:'active',site_version:s.event.site_version+1},{transaction});
  return {event:s.event.toJSON(),message:'Campagne enregistrée et publiée.'};

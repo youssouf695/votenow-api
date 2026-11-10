@@ -1,0 +1,10 @@
+const service=require('../services/campaignApplications');
+const handle=fn=>async(req,res)=>{res.set('Cache-Control','no-store');try{res.status(200).json(await fn(req));}catch(e){if(!e.status)console.error('[applications]',e.original?.code||e.code||e.name);res.status(e.status||503).json({error:e.status?e.message:'Candidatures temporairement indisponibles'});}};
+exports.publicForm=handle(req=>service.publicForm(req.params.slug));
+exports.ticket=handle(req=>service.ticket(req.params.slug));
+exports.upload=handle(req=>service.upload(req.params.slug,req.params.uploadId,req.get('X-Upload-Token'),req.body,req.get('content-type')));
+exports.submit=handle(req=>service.submit(req.params.slug,req.body));
+exports.list=handle(req=>service.list(req.user,req.params.id,req.query));
+exports.detail=handle(req=>service.detail(req.user,req.params.id,req.params.applicationId));
+exports.review=handle(req=>service.review(req.user,req.params.id,req.params.applicationId,req.body));
+exports.configure=handle(req=>service.configure(req.user,req.params.id,req.body));

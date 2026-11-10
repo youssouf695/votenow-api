@@ -28,6 +28,7 @@ exports.saveSite=async(req,res)=>{try{
   }
   const removed=old.filter(row=>!groups.some(group=>group.id===row.id)).map(row=>row.id);
   if(removed.length&&await Candidate.count({where:{event_id:event.id,category_id:{[Op.in]:removed}},transaction}))throw fail('Réaffectez les candidats avant de supprimer leur catégorie',409);
+  if(removed.length){const [applications]=await sequelize.query('SELECT 1 FROM campaign_applications WHERE event_id=:event AND category_id IN (:ids) LIMIT 1',{replacements:{event:event.id,ids:removed},transaction});if(applications.length)throw fail('Cette catégorie contient des candidatures. Conservez-la pour préserver leurs dossiers.',409);}
   if(removed.length)await CampaignCategory.destroy({where:{id:{[Op.in]:removed},event_id:event.id},transaction});
   for(const group of groups)await CampaignCategory.upsert({...group,event_id:event.id},{transaction});
   await event.update({site_config:config,partners,site_version:event.site_version+1},{transaction});

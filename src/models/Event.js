@@ -31,6 +31,9 @@ const Event = sequelize.define('Event', {
       is: /^[a-z0-9-]+$/  // Seulement lettres minuscules, chiffres et tirets
     }
   },
+  candidate_mode: { type: DataTypes.STRING(20), allowNull: false, defaultValue: 'manual', validate: { isIn: [['manual','registration']] } },
+  registration_config: { type: DataTypes.JSONB, allowNull: false, defaultValue: {} },
+  registration_version: { type: DataTypes.INTEGER, allowNull: false, defaultValue: 0 },
   site_version: { type: DataTypes.INTEGER, allowNull: false, defaultValue: 0 },
   site_config: { type: DataTypes.JSONB, allowNull: true },
   partners: { type: DataTypes.JSONB, allowNull: false, defaultValue: [] },
@@ -132,4 +135,3 @@ const Event = sequelize.define('Event', {
 });
 
 module.exports = Event;
-
