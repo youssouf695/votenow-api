@@ -14,9 +14,18 @@ function netFromGross(value,rate,rounding='exact'){
  const net=gross-fee;if(net<1)throw Object.assign(new Error('Le montant reçu doit être positif'),{status:422});
  return {gross,fee,net,rate,rounding,policy:'recipient_pays_v2'};
 }
-async function recipientQuote(withdrawal){
+async function recipientQuote(withdrawal,{legacy=false}={}){
  const operator={mtn_momo:'MTN',orange_money:'Orange'}[withdrawal.method];
  if(!operator)throw Object.assign(new Error('Opérateur de retrait non pris en charge'),{status:422});
+ const frozen=withdrawal.pricing_snapshot?.provider_selection;
+ if(!legacy&&(frozen||process.env.PAYMENT_PROVIDER_MANAGER_ENABLED==='true')){
+  const quote=await require('./paymentProviders/manager').select({
+   environment:require('../config/kpay').getConfig().mode,direction:'payout',amount:withdrawal.amount_fcfa,
+   rail:withdrawal.method,capabilityId:frozen?.capability_id||null
+  });
+  return {...quote,operator,rate:quote.tariff_terms.rate_units/100000000,rounding:quote.tariff_terms.rounding,
+   policy:'recipient_pays_v2',retrieved_at:new Date().toISOString()};
+ }
  const catalogue=await client.pricelist();
  const country=catalogue.countries?.find(row=>row.code==='CMR'&&row.currency==='XAF');
  const tariff=country?.operators?.find(row=>row.operator===operator);

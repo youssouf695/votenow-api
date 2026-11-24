@@ -30,7 +30,7 @@ const base=`WITH records AS (
  CASE WHEN provider_status IN ('FAILED','CANCELLED') AND status IN ('success','done') THEN 'CONFLICTING_FINAL_STATES' END,
  CASE WHEN inconsistent_votes>0 THEN 'VOTE_CAMPAIGN_MISMATCH' END,
  CASE WHEN type='topup' AND (status='success' OR provider_status='COMPLETED') AND (wallet_entries<>1 OR wallet_credit<>net) THEN 'WALLET_CREDIT_MISMATCH' END,
- CASE WHEN provider_status IN ('RECONCILIATION','AWAITING_DETAILS','UNKNOWN') THEN 'PROVIDER_REVIEW_REQUIRED' END,
+ CASE WHEN provider_status IN ('RECONCILIATION','AWAITING_DETAILS','UNKNOWN') OR (type='withdrawal' AND error_code='CONFLICTING_FINAL_EVENT') THEN 'PROVIDER_REVIEW_REQUIRED' END,
  CASE WHEN rejected_notifications>0 THEN 'REJECTED_SIGNED_NOTIFICATION' END,
  CASE WHEN operation_id IS NOT NULL AND ((last_event->>'externalId' IS NOT NULL AND last_event->>'externalId'<>external_id) OR (last_event->>'paymentId' IS NOT NULL AND provider_id IS NOT NULL AND last_event->>'paymentId'<>provider_id)) THEN 'REFERENCE_MISMATCH' END,
  CASE WHEN status IN ('pending','processing') AND created_at<now()-INTERVAL '30 minutes' THEN 'LONG_PENDING' END
@@ -88,18 +88,19 @@ async function recordReceipt(digest,event,outcome,count=true){
 }
 async function verify(actor,type,id,input){
  const motif=reason(input.reason),{transaction:record}=await detail(type,id);
+ if(type==='withdrawal'&&record.operation_id&&!record.provider_id)throw fail('Référence KPay indisponible. Rapprochez la référence externe existante auprès de KPay.',409);
  if(!record.operation_id||!record.provider_id)throw fail('Aucune référence KPay consultable. Aucun nouvel encaissement ne sera lancé.',409);
  const {KpayOperation}=require('../models'),operation=await KpayOperation.findByPk(record.operation_id),{mode}=require('../config/kpay').getConfig();
  if(operation.environment!==mode)throw fail('Cette opération appartient à un autre environnement KPay.',409);
  const correlation=crypto.randomUUID();await audit(actor,'VERIFY_REQUEST',type,id,motif,{correlation});
  try{
-  const response=await require('./kpayClient').getPayment(operation.provider_id),data=response?.data?.payment??response?.payment??response?.data??response;
+  const response=await require('./kpayOperations').operationClient(operation).getPayment(operation.provider_id),data=response?.data?.payment??response?.payment??response?.data??response;
   const {normalizePhone}=require('./kpayAmounts');
   if(!data||data.id!==operation.provider_id||data.externalId!==operation.external_id||Number(data.amount)!==operation.expected_amount||data.currency!=='XAF'||(typeof data.isTest==='boolean'&&data.isTest!==(mode==='sandbox'))||(data.provider&&data.provider!==operation.request_payload.provider)||(data.phoneNumber&&normalizePhone(data.phoneNumber)!==operation.request_payload.phoneNumber))throw fail('Réponse KPay incohérente. Aucun crédit manuel effectué.',409);
   const suffix={COMPLETED:'completed',FAILED:'failed',CANCELLED:'cancelled'}[data.status];
-  if(suffix)await require('./kpayOperations').applyEvent({event:`${operation.kind==='PAYOUT'?'payout':'payment'}.${suffix}`,status:data.status,paymentId:data.id,externalId:data.externalId,amount:data.amount,currency:data.currency,reference:data.reference,isTest:data.isTest,provider:data.provider,phoneNumber:data.phoneNumber,feeAmount:data.feeAmount,netAmount:data.netAmount,failureReason:typeof data.failureReason==='string'?data.failureReason.slice(0,1000):null});
+  const applied=suffix&&await require('./kpayOperations').applyEvent({event:`${operation.kind==='PAYOUT'?'payout':'payment'}.${suffix}`,status:data.status,paymentId:data.id,externalId:data.externalId,amount:data.amount,currency:data.currency,reference:data.reference,isTest:data.isTest,provider:data.provider,phoneNumber:data.phoneNumber,feeAmount:data.feeAmount,netAmount:data.netAmount,failureReason:typeof data.failureReason==='string'?data.failureReason.slice(0,1000):null},false,true,operation.pricing_snapshot?.provider_selection?.provider_code||'kpay');
   await audit(actor,'VERIFY_RESULT',type,id,motif,{correlation,provider_status:typeof data.status==='string'?data.status.slice(0,32):'UNKNOWN'});
-  return {...await detail(type,id),verification:{provider_status:data.status,applied:Boolean(suffix)}};
+  return {...await detail(type,id),verification:{provider_status:data.status,applied:operation.kind==='PAYOUT'?Boolean(applied&&applied.status===data.status):Boolean(suffix)}};
  }catch(error){await audit(actor,'VERIFY_FAILED',type,id,motif,{correlation,code:error.status===409?'RESPONSE_MISMATCH':'PROVIDER_OR_LOCAL_UNAVAILABLE'});throw error.status?error:fail('Vérification temporairement indisponible. Consultez le journal.',503)}
 }
 async function options(q){

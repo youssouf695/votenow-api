@@ -1,5 +1,6 @@
 const crypto=require('node:crypto'),db=require('../config/database'),{QueryTypes,Op}=require('sequelize');
 const {Event,Candidate,CampaignCategory,Payment}=require('../models'),validate=require('./campaignSettings');
+const {campaignVotePrice}=require('./campaignVotePrice');
 const fail=(message,status=400)=>Object.assign(new Error(message),{status});
 const uuid=v=>typeof v==='string'&&/^[a-f0-9]{8}-[a-f0-9]{4}-[1-5][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/i.test(v);
 const query=(sql,replacements={},transaction)=>db.query(sql,{replacements,type:QueryTypes.SELECT,transaction});
@@ -29,10 +30,10 @@ function normalize(input){
  const data={basics,categories,candidates,content,presentation:input.presentation?validate.settings(input.presentation):null};
  if(Buffer.byteLength(JSON.stringify(data))>90000)throw fail('La configuration dépasse la taille autorisée (90 Ko)');return data;
 }
-function validateThrough(data,step,maxCandidates=null,now=Date.now()){
+function validateThrough(data,step,maxCandidates=null,now=Date.now(),currentPrice){
  const b=data.basics;
  if(!b.title.trim()||b.title.trim().length<3)throw fail('Étape 1 : renseignez un nom de campagne (3 caractères minimum).');
- if(!Number.isInteger(b.vote_price_fcfa)||b.vote_price_fcfa<100||b.vote_price_fcfa>10000)throw fail('Étape 1 : le prix d’un vote doit être compris entre 100 et 10 000 FCFA.');
+ campaignVotePrice(b.vote_price_fcfa,currentPrice);
  for(const k of ['cover_image_url','avatar_url'])validate.safeUrl(b[k],'Étape 1 : image');
  for(const key of ['starts_at','ends_at'])if(b[key]&&(!/^\d{4}-\d\d-\d\dT.*(?:Z|[+-]\d\d:\d\d)$/.test(b[key])||!Number.isFinite(Date.parse(b[key]))))throw fail('Étape 1 : date invalide.');
  if(b.starts_at&&b.ends_at&&Date.parse(b.ends_at)<=Date.parse(b.starts_at))throw fail('Étape 1 : la fin doit être après le début.');
@@ -92,11 +93,12 @@ async function save(user,id,input){
  if(!uuid(id))throw fail('Campagne invalide');const data=normalize(input.data);
  return db.transaction(async transaction=>{
   const s=await source(id,user,transaction),row=await selectSetup(id,transaction,true);checkRevision(row,input);
+  if(data.basics.vote_price_fcfa!==null)campaignVotePrice(data.basics.vote_price_fcfa,s.event.vote_price_fcfa);
   if(row.source_hash!==s.hash)throw fail('La campagne a changé en dehors de l’assistant. Rechargez ses données avant de poursuivre.',409);
   const {step,target_step:target}=input;
   if(step!==row.step||!Number.isInteger(target)||target<1||target>5||target>step+1)throw fail('Transition d’étape invalide');
   let completed=Math.min(row.completed,step-1);
-  if(target>step){validateThrough(data,step,s.event.max_candidates);completed=step}
+  if(target>step){validateThrough(data,step,s.event.max_candidates,Date.now(),s.event.vote_price_fcfa);completed=step}
   const [updated]=await query('UPDATE campaign_setups SET data=CAST(:data AS jsonb),step=:target,completed=:completed,revision=revision+1,updated_at=now() WHERE event_id=:id RETURNING *',{id,data:JSON.stringify(data),target,completed},transaction);
   return snapshot(s,updated);
  });
@@ -110,7 +112,7 @@ async function publish(user,id,input){if(!uuid(id))throw fail('Campagne invalide
  const s=await source(id,user,transaction),row=already;checkRevision(row,input);
  if(row.source_hash!==s.hash)throw fail('La campagne a changé en dehors de l’assistant. Rechargez ses données avant de publier.',409);
  if(row.step!==5||row.completed<4)throw fail('Terminez les quatre premières étapes avant de publier.',409);
- const data=normalize(row.data);validateThrough(data,4,s.event.max_candidates);
+ const data=normalize(row.data);validateThrough(data,4,s.event.max_candidates,Date.now(),s.event.vote_price_fcfa);
  for(const group of data.categories){const found=await CampaignCategory.findByPk(group.id,{transaction});if(found&&found.event_id!==id)throw fail('Identifiant de catégorie indisponible');}
  for(const c of data.candidates){const found=await Candidate.findByPk(c.id,{transaction});if(found&&found.event_id!==id)throw fail('Identifiant de candidat indisponible');}
  const removed=s.candidates.filter(c=>!data.candidates.some(next=>next.id===c.id));

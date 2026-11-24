@@ -10,13 +10,14 @@ function normalizePhone(value) {
   if (!/^2376\d{8}$/.test(phone)) throw Object.assign(new Error('Numéro camerounais invalide'), { status: 400 });
   return phone;
 }
-function amounts(price, quantity, rate) {
+function amounts(price, quantity, rate, maxVotes = 100) {
   const count = integer(quantity, 'Nombre de votes');
-  if (count > 100) throw Object.assign(new Error('Maximum 100 votes par paiement'), { status: 400 });
+  if (count > maxVotes) throw Object.assign(new Error('Nombre de votes supérieur au plafond du paiement'), { status: 400 });
   const gross = integer(integer(price) * count);
   const percent = Number(rate);
   if (!Number.isFinite(percent) || percent < 0 || percent > 50) throw new Error('Commission événement invalide');
-  const commission = Math.round(gross * percent / 100);
+  const rateUnits = BigInt(Math.round(percent * 100));
+  const commission = Number((BigInt(gross) * rateUnits + 5000n) / 10000n);
   return { gross, commission, net: gross - commission, rate: percent, count };
 }
 // Le contrat public ne précise pas l'arrondi du payout. Aucun choix implicite.

@@ -1,12 +1,29 @@
 const { publicFailure } = require('../services/paymentFailure');
-const crypto = require('node:crypto');
+const {randomUUID} = require('node:crypto');
 const {validationResult} = require('express-validator');
 const {Payment, Event, Candidate, KpayOperation} = require('../models');
 const sequelize = require('../config/database');
-const {amounts, normalizePhone, integer} = require('../services/kpayAmounts');
+const {normalizePhone, integer} = require('../services/kpayAmounts');
 const {hash, dispatch, failure, reconcileDeposit} = require('../services/kpayOperations');
 const kpay = require('../services/kpayClient');
 const {getConfig} = require('../config/kpay');
+const {votePrice,quoteBreakdown,unavailableKpayTotal,kpayVoteMode,MAX_MOBILE_VOTES,MAX_MOBILE_AMOUNT} = require('../services/votePricing');
+const {networks,depositHealth}=require('../services/paymentProviders/mobileHealth');
+const mobileMethod='mobile_money';
+const providerReview=operation=>['UNKNOWN','RECONCILIATION','AWAITING_DETAILS'].includes(operation?.status);
+
+async function publicNetworks(mode,amount=null) {
+    if(!mode)return [];
+    const candidates=process.env.PAYMENT_PROVIDER_MANAGER_ENABLED==='true'
+        ? await require('../services/paymentProviders/manager').depositCapabilities(mode==='sandbox'?'sandbox':'production',amount)
+        : await Promise.all(Object.keys(networks).map(async rail=>({rail,state:await depositHealth(rail)})));
+    const rank=['unavailable','unknown','delayed','available'];
+    return Object.keys(networks).flatMap(rail=>{
+        const routes=candidates.filter(row=>row.rail===rail);
+        if(!routes.length)return [];
+        return [{rail,state:rank[Math.max(...routes.map(row=>rank.indexOf(row.state)),0)]}];
+    });
+}
 
 function logPaymentError(label, error) {
     console.error(label, {
@@ -42,16 +59,54 @@ async function responseFor(operation) {
         payment_id: payment.id,
         status: payment.status,
         amount: payment.amount_fcfa,
+        requested_amount_fcfa: current.expected_amount,
         votes_count: payment.votes_count,
         candidate: candidate?.name,
         method: payment.method,
-        provider_status: current.status,
+        review_required: providerReview(current),
         checkout_url: current.pricing_snapshot?.checkout_url || null,
+        simulation: current.environment === 'sandbox',
         message:
             payment.status === 'failed'
                 ? 'Paiement non effectué.'
                 : 'Demande enregistrée. La confirmation sera reçue automatiquement.',
     };
+}
+
+exports.quoteVote = async (req,res) => {
+    const errors=validationResult(req);
+    if (!errors.isEmpty()) return res.status(400).json({errors:errors.array()});
+    try {
+        const {unitPrice,price}=await votePrice(req.body,undefined,MAX_MOBILE_VOTES);
+        const mode=kpayVoteMode();
+        const quote=quoteBreakdown(unitPrice,price,mobileMethod);
+        return res.set('Cache-Control','no-store').json({
+            ...quote,
+            budget_fcfa:req.body.nominal_budget_fcfa===undefined?price.gross:Number(req.body.nominal_budget_fcfa),
+            payment_mode:mode==='sandbox'?'simulation':mode,
+            networks:await publicNetworks(mode,quote.requested_amount_fcfa),
+            max_requested_fcfa:MAX_MOBILE_AMOUNT,
+        });
+    } catch (error) {
+        return res.status(error.status||503).json({error:error.status&&error.status<500?error.message:'Devis temporairement indisponible.'});
+    }
+};
+
+async function selectVoteProvider(environment,amount,phone,selectedRail) {
+    if (process.env.PAYMENT_PROVIDER_MANAGER_ENABLED==='true') {
+        const quote=await require('../services/paymentProviders/manager').select({
+            environment,direction:'deposit',amount,phone,rail:selectedRail
+        });
+        return {network:quote.network,rail:quote.rail,snapshot:{
+            provider_selection:quote.provider_selection,tariff_terms:quote.tariff_terms
+        }};
+    }
+    const detected=await kpay.predictProvider(phone);
+    const rail=Object.keys(networks).find(key=>networks[key]===detected.provider);
+    if (detected.country!=='CMR'||!rail) throw failure('Ce numéro ne correspond pas à un réseau mobile pris en charge.',422);
+    if (selectedRail&&selectedRail!==rail) throw failure('Le numéro ne correspond pas au réseau sélectionné.',422);
+    if (!['available','delayed'].includes(await depositHealth(rail))) throw unavailableKpayTotal();
+    return {network:detected.provider,rail,snapshot:{}};
 }
 
 exports.initiatePayment = async (req, res) => {
@@ -69,7 +124,6 @@ exports.initiatePayment = async (req, res) => {
             event_id,
             candidate_id,
             votes_count,
-            voter_name,
         } = req.body;
 
         const phone = normalizePhone(req.body.voter_phone);
@@ -107,150 +161,63 @@ exports.initiatePayment = async (req, res) => {
             return res.status(200).json(await responseFor(operation));
         }
 
-        const config = getConfig();
-        const event = await Event.findByPk(event_id);
-        const now = Date.now();
-
-        if (
-            !event || event.archived_at ||
-            event.status !== 'active' ||
-            (event.starts_at &&
-                new Date(event.starts_at).getTime() > now) ||
-            (event.ends_at &&
-                new Date(event.ends_at).getTime() <= now)
-        ) {
-            throw failure('Événement non disponible', 400);
+        const mode=kpayVoteMode();
+        if (!mode) throw unavailableKpayTotal();
+        const sandbox=mode==='sandbox';
+        const environment=sandbox?'sandbox':'production';
+        const matchesMode=req.body.vote_mode===mode || (sandbox && req.body.vote_mode===undefined);
+        if (!matchesMode || req.body.accept_unverified_total!==true) {
+            const message=sandbox?'Confirmez explicitement la simulation sans total votant garanti.'
+                :'Confirmez le montant demandé et les éventuels frais opérateur avant de payer.';
+            const code=sandbox?'KPAY_SANDBOX_CONFIRMATION_REQUIRED':'KPAY_LIVE_CONFIRMATION_REQUIRED';
+            throw Object.assign(failure(message,409),{code});
         }
-
-        const candidate = await Candidate.findOne({
-            where: {
-                id: candidate_id,
-                event_id,
-                is_active: true,
-            },
-        });
-
-        if (!candidate) {
-            throw failure('Candidat non disponible', 400);
-        }
-
-        const calculation = amounts(
-            event.vote_price_fcfa,
-            quantity,
-            event.commission_rate
-        );
-
-        if (calculation.gross !== quotedAmount) {
-            throw failure(
-                'Le tarif a changé. Actualisez le formulaire avant de payer.',
-                409
-            );
-        }
-
-        // En mode USSD, l’opérateur prédit et le numéro sont transmis à KPay.
-        const predicted = await kpay.predictProvider(phone);
-
-        if (
-            predicted.country !== 'CMR' ||
-            !['MTN_MOMO_CMR', 'ORANGE_CMR'].includes(predicted.provider)
-        ) {
-            throw failure('Opérateur non pris en charge', 422);
-        }
-
-        // L'état DEPOSIT, et non PAYOUT, détermine si l'on peut encaisser.
-        let availability;
+        const selection={event_id,candidate_id,votes_count:quantity,nominal_budget_fcfa:req.body.nominal_budget_fcfa};
+        const verifyQuote=({unitPrice,price})=>{
+            const quote=quoteBreakdown(unitPrice,price,mobileMethod);
+            if (quote.requested_amount_fcfa!==quotedAmount || price.count!==quantity) {
+                throw Object.assign(failure('Le prix a changé. Actualisez le devis avant de confirmer.',409),{code:'VOTE_QUOTE_CHANGED'});
+            }
+            return quote;
+        };
+        verifyQuote(await votePrice(selection,undefined,MAX_MOBILE_VOTES));
+        const provider=await selectVoteProvider(environment,quotedAmount,phone,req.body.rail||null);
+        const paymentId=randomUUID();
+        const externalId=`vn-v-${paymentId}`;
         try {
-            availability = await kpay.availability();
-        } catch (error) {
-            throw failure('Disponibilité Mobile Money momentanément invérifiable. Réessayez plus tard.', 503);
-        }
-        const country = Array.isArray(availability)
-            ? availability.find(item => item.country === 'CMR') : null;
-        const provider = country?.providers?.find(item => item.provider === predicted.provider);
-        const depositStatus = provider?.operationTypes?.DEPOSIT;
-        if (depositStatus !== 'OPERATIONAL') {
-            throw failure('Cet opérateur Mobile Money est actuellement indisponible.', 503);
-        }
-
-        const paymentId = crypto.randomUUID();
-        const externalId = `vn-v-${paymentId}`;
-
-        try {
-            operation = await sequelize.transaction(async (transaction) => {
-                await Payment.create(
-                    {
-                        id: paymentId,
-                        event_id,
-                        candidate_id,
-                        voter_phone: phone,
-                        voter_name:
-                            typeof voter_name === 'string'
-                                ? voter_name.trim().slice(0, 150) || null
-                                : null,
-                        amount_fcfa: calculation.gross,
-                        votes_count: calculation.count,
-                        commission_amount: calculation.commission,
-                        net_to_organizer: calculation.net,
-                        commission_rate_applied: calculation.rate,
-                        method:
-                            predicted.provider === 'MTN_MOMO_CMR'
-                                ? 'mtn_momo'
-                                : 'orange_money',
-                        status: 'pending',
-                        ip_address: req.ip,
-                    },
-                    {transaction}
-                );
-
-                return KpayOperation.create(
-                    {
-                        kind: 'DEPOSIT',
-                        domain_id: paymentId,
-                        request_key: request_id,
-                        external_id: externalId,
-                        fingerprint,
-                        environment: config.mode,
-                        expected_amount: calculation.gross,
-                        status: 'CREATED',
-                        request_payload: {
-                            amount: calculation.gross,
-                            provider: predicted.provider,
-                            phoneNumber: phone,
-                            externalId,
-                            currency: 'XAF',
-                            description: `${event.title} — ${candidate.name}`.slice(0, 200),
-                            metadata: {
-                                paymentId,
-                            },
-                        },
-                    },
-                    {transaction}
-                );
+            operation=await sequelize.transaction(async transaction=>{
+                const current=await votePrice(selection,transaction,MAX_MOBILE_VOTES);
+                const quote=verifyQuote(current);
+                const {price}=current;
+                await Payment.create({
+                    id:paymentId,event_id,candidate_id,voter_phone:phone,
+                    voter_name:typeof req.body.voter_name==='string'?req.body.voter_name.trim().slice(0,150):null,
+                    amount_fcfa:price.gross,votes_count:price.count,commission_amount:price.commission,
+                    net_to_organizer:price.net,commission_rate_applied:price.rate,method:provider.rail,status:'pending',ip_address:req.ip
+                },{transaction});
+                return KpayOperation.create({
+                    kind:'DEPOSIT',domain_id:paymentId,request_key:request_id,external_id:externalId,fingerprint,
+                    environment,expected_amount:quote.requested_amount_fcfa,status:'CREATED',
+                    pricing_snapshot:{...provider.snapshot,...quote,vote_confirmation:sandbox?'sandbox_unverified':'live_unverified'},
+                    request_payload:{amount:quote.requested_amount_fcfa,provider:provider.network,phoneNumber:phone,externalId,currency:'XAF',
+                        description:current.event.title.slice(0,200),metadata:{paymentId}}
+                },{transaction});
             });
         } catch (error) {
-            if (error.name !== 'SequelizeUniqueConstraintError') {
-                throw error;
-            }
-
-            operation = await KpayOperation.findOne({
-                where: {
-                    request_key: request_id,
-                },
-            });
-
-            if (!operation || operation.fingerprint !== fingerprint) {
-                throw failure('Tentative concurrente incohérente', 409);
+            if (error.name!=='SequelizeUniqueConstraintError') throw error;
+            operation=await KpayOperation.findOne({where:{request_key:request_id}});
+            if (operation?.kind!=='DEPOSIT'||operation.environment!==environment||operation.fingerprint!==fingerprint) {
+                throw failure('Tentative concurrente incohérente',409);
             }
         }
-
         await dispatch(operation.id);
-
         return res.status(201).json(await responseFor(operation));
     } catch (error) {
-        logPaymentError('[payments.initiate]', error);
+        if (error.code !== 'PAYMENT_UNAVAILABLE') logPaymentError('[payments.initiate]', error);
 
         return res.status(error.status || 503).json({
-            error: error.status
+            ...(['PAYMENT_UNAVAILABLE','NO_PAYMENT_PROVIDER','VOTE_QUOTE_CHANGED'].includes(error.code) ? {code:error.code} : {}),
+            error: error.code==='PAYMENT_UNAVAILABLE'||error.code==='NO_PAYMENT_PROVIDER' ? 'Le paiement mobile est indisponible.' : error.status && error.status < 500
                 ? error.message
                 : 'Paiement indisponible. Conservez cette tentative et réessayez sa vérification.',
         });
@@ -301,11 +268,12 @@ exports.checkPaymentStatus = async (req, res) => {
             payment_id: refreshedPayment.id,
             status: refreshedPayment.status,
             amount: refreshedPayment.amount_fcfa,
+            requested_amount_fcfa: refreshedOperation?.expected_amount ?? null,
             votes_count: refreshedPayment.votes_count,
             candidate: payment.candidate?.name,
             method: refreshedPayment.method,
             created_at: refreshedPayment.created_at,
-            provider_status: refreshedOperation?.status || null,
+            review_required: providerReview(refreshedOperation),
             checkout_url: refreshedOperation?.pricing_snapshot?.checkout_url || null,
         });
     } catch (error) {
@@ -404,30 +372,13 @@ exports.getEventPayments = async (req, res) => {
 // Disponibilité publique des moyens de paiement pour les dépôts.
 exports.getPaymentAvailability = async (req, res) => {
     try {
-        const result = await kpay.availability();
-        const entries = Array.isArray(result) ? result : (Array.isArray(result?.data) ? result.data : null);
-        if (!entries) {
-            console.warn('[payments.availability] Format KPay inattendu');
-            return res.status(503).json({message: 'Moyens de paiement temporairement indisponibles.'});
-        }
-        const country = typeof req.query.country === 'string' ? req.query.country.toUpperCase() : null;
-        if (country && !/^[A-Z]{3}$/.test(country)) {
-            return res.status(400).json({message: 'Code pays invalide (ISO alpha-3).'});
-        }
-        const countries = entries
-            .filter(entry => entry && typeof entry.country === 'string' && (!country || entry.country === country))
-            .map(entry => ({
-                country: entry.country,
-                providers: (Array.isArray(entry.providers) ? entry.providers : [])
-                    .filter(item => item && typeof item.provider === 'string' && item.operationTypes?.DEPOSIT === 'OPERATIONAL')
-                    .map(item => ({provider: item.provider, available: true}))
-            }));
-        return res.set('Cache-Control', 'public, max-age=30').json({countries});
-    } catch (error) {
-        console.warn('[payments.availability]', {
-            providerHttpStatus: error.providerHttpStatus || null,
-            code: error.providerErrorCode || null
+        const mode=kpayVoteMode();
+        return res.set('Cache-Control','no-store').json({
+            mobile_payment:{mode:mode==='sandbox'?'simulation':mode,networks:await publicNetworks(mode)},
+            votenow_card:{requires_account:true}
         });
-        return res.status(503).json({message: 'Moyens de paiement temporairement indisponibles.'});
+    } catch (error) {
+        console.warn('[payments.availability]',{code:error.original?.code||error.code||null});
+        return res.status(503).json({error:'Moyens de paiement temporairement indisponibles.'});
     }
 };

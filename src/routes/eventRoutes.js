@@ -23,6 +23,8 @@ router.get('/public/id/:id', eventController.getPublicEventById); // ← Nouvell
 // ==================== ROUTES PROTÉGÉES ====================
 // Toutes les routes après auth nécessitent une authentification
 router.use(auth);
+router.get('/:eventId/commission', authorize('organizer'), require('../controllers/campaignCommissionController').getOrganizer);
+
 router.get('/:id/applications',authorize('organizer','admin'),applications.list);
 router.get('/:id/applications/:applicationId',authorize('organizer','admin'),applications.detail);
 router.post('/:id/applications/:applicationId/review',authorize('organizer','admin'),applicationLimit({scope:'application-review',limit:150,seconds:3600,identify:req=>req.user.id}),applications.review);
@@ -71,8 +73,7 @@ router.get('/:id',
 router.put('/:id',
   [
     param('id').isUUID().withMessage('ID invalide'),
-    body('title').optional().notEmpty(),
-    body('vote_price_fcfa').optional().isInt({ min: 100, max: 10000 })
+    body('title').optional().notEmpty()
   ],
   authorize('organizer', 'admin'),
   eventController.updateEvent

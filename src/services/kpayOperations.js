@@ -4,6 +4,7 @@ const sequelize = require('../config/database');
 const client = require('./kpayClient');
 const {getConfig} = require('../config/kpay');
 const {integer, normalizePhone, grossForNet} = require('./kpayAmounts');
+const {postWithdrawal} = require('./withdrawalJournal');
 
 const {walletCredit,resumableWalletNetCheck}=require('./walletCredit');
 const terminal = new Set(['COMPLETED', 'FAILED', 'CANCELLED', 'RECONCILIATION']);
@@ -17,6 +18,11 @@ function optionalAmount(value) {
     if (value === null || value === undefined || value === '') return null;
     const amount = Number(value);
     return Number.isFinite(amount) && amount >= 0 ? amount : null;
+}
+
+function payoutAmount(value) {
+    if (typeof value !== 'number' && (typeof value !== 'string' || !/^\d+(\.\d+)?$/.test(value))) return null;
+    return optionalAmount(value);
 }
 
 async function verifiedPayoutBeneficiary(withdrawal, transaction) {
@@ -34,20 +40,36 @@ async function verifiedPayoutBeneficiary(withdrawal, transaction) {
     return beneficiary;
 }
 
+async function verifiedHistoricalBeneficiary(withdrawal, transaction) {
+    const {WithdrawalBeneficiary} = require('../models');
+    const phone = normalizePhone(withdrawal.destination_phone);
+    const where = {user_id: withdrawal.organizer_id, phone, deleted_at: null};
+    if (withdrawal.beneficiary_id) where.id = withdrawal.beneficiary_id;
+    const beneficiary = await WithdrawalBeneficiary.findOne({
+        where, transaction, ...(transaction ? {lock: transaction.LOCK.UPDATE} : {})
+    });
+    if (!beneficiary?.verified_at || beneficiary.method !== withdrawal.method ||
+        !withdrawal.destination_name?.trim() || beneficiary.full_name.trim() !== withdrawal.destination_name.trim()) {
+        throw failure('Validez par email un bénéficiaire aux mêmes coordonnées ou annulez le retrait.', 409);
+    }
+    return beneficiary;
+}
+
 async function payoutQuote(withdrawal) {
     if (process.env.KPAY_PAYOUT_PRICING_CONFIRMED !== 'true') {
         throw failure('Le tarif et l’arrondi des retraits doivent être confirmés auprès de KPay avant tout envoi. Aucun transfert lancé.', 503);
     }
     if (withdrawal.fee_policy === 'recipient_pays_v2') {
         await verifiedPayoutBeneficiary(withdrawal);
-        const quote = await require('./recipientPayout').recipientQuote(withdrawal);
-        if (quote.fee !== withdrawal.fee_fcfa || quote.net !== withdrawal.net_fcfa || quote.rate !== withdrawal.pricing_snapshot?.rate || quote.rounding !== withdrawal.pricing_snapshot?.rounding || quote.environment !== withdrawal.pricing_snapshot?.environment) {
+        const quote = await require('./recipientPayout').recipientQuote(withdrawal,{legacy:!withdrawal.pricing_snapshot?.provider_selection});
+        if (quote.fee !== withdrawal.fee_fcfa || quote.net !== withdrawal.net_fcfa || quote.rate !== withdrawal.pricing_snapshot?.rate || quote.rounding !== withdrawal.pricing_snapshot?.rounding || quote.environment !== withdrawal.pricing_snapshot?.environment || quote.provider_selection?.tariff_id !== withdrawal.pricing_snapshot?.provider_selection?.tariff_id) {
             throw failure('Le tarif ou l’environnement de transfert a changé. Annulez la demande et confirmez un nouveau récapitulatif.', 409);
         }
         return quote;
     }
     const operator = {mtn_momo: 'MTN', orange_money: 'Orange'}[withdrawal.method];
     if (!operator) throw failure('Ce lot prend en charge les retraits MTN et Orange uniquement.', 422);
+    await verifiedHistoricalBeneficiary(withdrawal);
     const catalogue = await client.pricelist();
     const country = catalogue.countries?.find(item => item.code === 'CMR' && item.currency === 'XAF');
     const tariff = country?.operators?.find(item => item.operator === operator);
@@ -55,8 +77,8 @@ async function payoutQuote(withdrawal) {
     return {...quote, operator, retrieved_at: new Date().toISOString()};
 }
 
-// Appelé seulement après vérification HMAC, ou pour un rejet HTTP certain de l'init.
-async function applyEvent(event, internal = false) {
+// Called by signed webhooks, authenticated status lookups and internal deposit failures.
+async function applyEvent(event, internal = false, verifiedLookup = false, providerCode = 'kpay') {
     const prefix = event.event?.startsWith('payout.') ? 'PAYOUT' : 'DEPOSIT';
     const endings = {completed: 'COMPLETED', failed: 'FAILED', cancelled: 'CANCELLED'};
     const expected = endings[event.event?.split('.')[1]];
@@ -68,13 +90,28 @@ async function applyEvent(event, internal = false) {
             lock: transaction.LOCK.UPDATE
         });
         if (!operation) throw failure('Opération inconnue', 404);
+        if ((operation.pricing_snapshot?.provider_selection?.provider_code || 'kpay') !== providerCode) throw failure('Fournisseur incohérent');
         if ((operation.kind !== prefix && !(operation.kind==='WALLET_TOPUP'&&prefix==='DEPOSIT')) || operation.environment !== getConfig().mode) throw failure('Opération incohérente');
-        if (Number(event.amount) !== operation.expected_amount || (event.currency && event.currency !== 'XAF')) throw failure('Montant ou devise incohérent');
+        const payout = operation.kind === 'PAYOUT';
+        if (payout && (internal || typeof event.paymentId !== 'string' || !event.paymentId.trim() ||
+            (event.isTest != null && typeof event.isTest !== 'boolean') || (event.currency != null && event.currency !== 'XAF'))) {
+            throw failure('Confirmation de retrait invalide');
+        }
+        if ((payout ? payoutAmount(event.amount) : Number(event.amount)) !== operation.expected_amount || (event.currency && event.currency !== 'XAF')) throw failure('Montant ou devise incohérent');
         if (typeof event.isTest === 'boolean' && event.isTest !== (operation.environment === 'sandbox')) throw failure('Environnement incohérent');
         if (event.phoneNumber && operation.request_payload.phoneNumber && normalizePhone(event.phoneNumber) !== operation.request_payload.phoneNumber) throw failure('Bénéficiaire incohérent');
         if (event.provider && operation.request_payload.provider && event.provider !== operation.request_payload.provider) throw failure('Opérateur incohérent');
         if (!internal && operation.provider_id && operation.provider_id !== event.paymentId) throw failure('Référence incohérente');
-        if (terminal.has(operation.status) && !(expected==='COMPLETED'&&resumableWalletNetCheck(operation))) {
+        const pendingFailure = payout && operation.status === 'RECONCILIATION' && operation.error_code === 'PAYOUT_FAILURE_UNVERIFIED';
+        const resolvesPendingFailure = pendingFailure && (expected === 'COMPLETED' || (verifiedLookup && expected === operation.last_event?.status));
+        if (terminal.has(operation.status) && !resolvesPendingFailure && !(expected==='COMPLETED'&&resumableWalletNetCheck(operation))) {
+            if (payout) {
+                if ((pendingFailure && expected !== operation.last_event?.status) ||
+                    (operation.status !== expected && operation.status !== 'RECONCILIATION')) {
+                    await operation.update({error_code: 'CONFLICTING_FINAL_EVENT'}, {transaction});
+                }
+                return operation;
+            }
             if (operation.status === expected && expected === 'FAILED' && !operation.last_event?.failureReason && typeof event.failureReason === 'string') {
                 await operation.update({ last_event: event }, { transaction });
             }
@@ -92,9 +129,27 @@ async function applyEvent(event, internal = false) {
             details.provider_id = event.paymentId;
             details.provider_reference = event.reference || operation.provider_reference || null;
         }
-        const fee = optionalAmount(event.feeAmount), net = optionalAmount(event.netAmount);
-        if (fee !== null) details.provider_fee = fee;
-        if (net !== null) details.provider_net = net;
+        const fee = payout ? payoutAmount(event.feeAmount) : optionalAmount(event.feeAmount);
+        const net = payout ? payoutAmount(event.netAmount) : optionalAmount(event.netAmount);
+        if (!payout || expected === 'COMPLETED') {
+            if (fee !== null) details.provider_fee = fee;
+            if (net !== null) details.provider_net = net;
+        }
+        if (payout && operation.status === 'CREATED') {
+            await operation.update({...details, status: 'RECONCILIATION', error_code: 'PAYOUT_EVENT_BEFORE_INIT'}, {transaction});
+            return operation;
+        }
+        if (payout && expected !== 'COMPLETED') {
+            if (operation.status === 'AWAITING_DETAILS') {
+                await operation.update({status: 'RECONCILIATION', error_code: 'CONFLICTING_FINAL_EVENT'}, {transaction});
+                return operation;
+            }
+            if (!verifiedLookup) {
+                // A signed failure is a reconciliation candidate, not yet a refund.
+                await operation.update({...details, status: 'RECONCILIATION', error_code: 'PAYOUT_FAILURE_UNVERIFIED'}, {transaction});
+                return operation;
+            }
+        }
         if (operation.kind === 'WALLET_TOPUP') {
             const {WalletTopup,WalletEntry}=require('../models/Wallet');
             const topup=await WalletTopup.findByPk(operation.domain_id,{transaction,lock:transaction.LOCK.UPDATE});
@@ -119,7 +174,7 @@ async function applyEvent(event, internal = false) {
                 return operation;
             }
             if (expected === 'COMPLETED') {
-                const eventRow = await Event.findByPk(payment.event_id, {transaction});
+                const eventRow = await Event.findByPk(payment.event_id, {transaction, lock: transaction.LOCK.UPDATE});
                 if (!eventRow) throw new Error('Événement absent');
                 await payment.update({
                     status: 'success',
@@ -166,7 +221,7 @@ async function applyEvent(event, internal = false) {
                 return operation;
             }
             if (expected === 'COMPLETED') {
-                const delivered = net ?? optionalAmount(operation.provider_net);
+                const delivered = net ?? (pendingFailure || event.netAmount != null ? null : payoutAmount(operation.provider_net));
                 if (delivered === null) {
                     // Un webhook peut précéder la réponse de l'initiation : on attend ses détails.
                     await operation.update({
@@ -184,6 +239,7 @@ async function applyEvent(event, internal = false) {
                     }, {transaction});
                     return operation;
                 }
+                await postWithdrawal(withdrawal, 'settle', 'provider_success', transaction, operation.id);
                 await withdrawal.update({
                     status: 'done',
                     completed_at: new Date(),
@@ -191,10 +247,7 @@ async function applyEvent(event, internal = false) {
                 }, {transaction});
             } else {
                 // Le montant réservé est restitué une seule fois après échec confirmé.
-                await User.increment({balance_fcfa: withdrawal.amount_fcfa}, {
-                    where: {id: withdrawal.organizer_id},
-                    transaction
-                });
+                await postWithdrawal(withdrawal, 'release', 'provider_failure', transaction, operation.id);
                 await withdrawal.update({
                     status: 'rejected',
                     completed_at: new Date(),
@@ -212,19 +265,94 @@ async function applyEvent(event, internal = false) {
     });
 }
 
+async function organizerSuspended(organizerId, transaction) {
+    // Account restriction changes acquire this same user lock before writing.
+    const user = await User.findByPk(organizerId, {transaction, lock: transaction.LOCK.UPDATE});
+    if (!user) throw failure('Organisateur introuvable.', 409);
+    const [restrictions] = await sequelize.query('SELECT suspended FROM user_restrictions WHERE user_id = :id', {
+        replacements: {id: organizerId}, transaction
+    });
+    return restrictions[0]?.suspended === true;
+}
+
+function suspendedPayout() {
+    return Object.assign(failure('Organisateur suspendu. Les fonds restent réservés.', 403), {code: 'PAYOUT_ORGANIZER_SUSPENDED'});
+}
+
+async function initiatePayout(operation, organizerId) {
+    const attempt = await sequelize.transaction(async transaction => {
+        if (await organizerSuspended(organizerId, transaction)) return null;
+        // Keep suspension serialized until the outbound request has resolved.
+        return {result: await startProviderRequest(operation, transaction)};
+    });
+    if (attempt) return attempt.result;
+
+    await restoreUnsent(operation.id);
+    throw suspendedPayout();
+}
+
+async function restoreUnsent(operationId) {
+    // This dispatcher proved it did not call KPay. Release the user lock
+    // before taking the operation lock in order to preserve lock ordering.
+    await sequelize.transaction(async transaction => {
+        const row = await KpayOperation.findByPk(operationId, {transaction, lock: transaction.LOCK.UPDATE});
+        if (row.status === 'INITIATING' && !row.provider_id && !row.last_event) {
+            await row.update({status: 'CREATED', started_at: null}, {transaction});
+        }
+    });
+}
+
+function managedOperation(operation) {
+    return process.env.PAYMENT_PROVIDER_MANAGER_ENABLED === 'true' || Boolean(operation.pricing_snapshot?.provider_selection);
+}
+
+function operationClient(operation) {
+    if (!operation.pricing_snapshot?.provider_selection) return client;
+    const adapter = require('./paymentProviders/manager').operationAdapter(operation);
+    return {
+        initiateWithdrawal: payload => adapter.initiate('payout',payload),
+        initiatePayment: payload => adapter.initiate('deposit',payload),
+        getPayment: id => adapter.lookup(id)
+    };
+}
+
+async function startProviderRequest(operation, transaction) {
+    if (managedOperation(operation)) {
+        await require('./paymentProviders/manager').assertDispatch(operation,transaction);
+    }
+    const selected = operationClient(operation);
+    return operation.kind === 'PAYOUT'
+        ? selected.initiateWithdrawal(operation.request_payload)
+        : selected.initiatePayment(operation.request_payload);
+}
+
 async function dispatch(operationId) {
+    let organizerId;
     const operation = await sequelize.transaction(async transaction => {
         const row = await KpayOperation.findByPk(operationId, {transaction, lock: transaction.LOCK.UPDATE});
         if (!row || row.status !== 'CREATED') return null;
+        if (row.kind === 'DEPOSIT') {
+            const {kpayVoteMode,unavailableKpayTotal}=require('./votePricing');
+            const mode=kpayVoteMode();
+            const confirmation=row.pricing_snapshot?.vote_confirmation;
+            const sandbox=mode==='sandbox' && row.environment==='sandbox' && confirmation==='sandbox_unverified';
+            const live=mode==='live' && row.environment==='production' && (!confirmation || confirmation==='live_unverified');
+            if ((!sandbox && !live) || row.started_at || row.provider_id || row.last_event) {
+                throw unavailableKpayTotal();
+            }
+        }
         if(row.environment!==getConfig().mode)throw failure('Cette tentative appartient à un autre environnement de paiement.',409);
         if(!['DEPOSIT','PAYOUT','WALLET_TOPUP'].includes(row.kind))throw failure('Type d’opération inconnu',409);
+
         if (row.kind === 'PAYOUT') {
             const withdrawal = await Withdrawal.findByPk(row.domain_id, {transaction, lock: transaction.LOCK.UPDATE});
-            if (withdrawal?.fee_policy === 'recipient_pays_v2') {
+            if (withdrawal?.status !== 'processing') throw failure('Ce retrait n’est plus en cours de traitement.', 409);
+            organizerId = withdrawal.organizer_id;
+            if (await organizerSuspended(organizerId, transaction)) throw suspendedPayout();
+            const provider = row.pricing_snapshot?.network || {mtn_momo: 'MTN_MOMO_CMR', orange_money: 'ORANGE_CMR'}[withdrawal.method];
+            if (withdrawal.fee_policy === 'recipient_pays_v2') {
                 await verifiedPayoutBeneficiary(withdrawal, transaction);
-                const provider = {mtn_momo: 'MTN_MOMO_CMR', orange_money: 'ORANGE_CMR'}[withdrawal.method];
-                if (withdrawal.status !== 'processing' || row.environment !== getConfig().mode ||
-                    row.expected_amount !== withdrawal.amount_fcfa || row.request_payload?.amount !== withdrawal.amount_fcfa ||
+                if (row.expected_amount !== withdrawal.amount_fcfa || row.request_payload?.amount !== withdrawal.amount_fcfa ||
                     row.request_payload?.phoneNumber !== withdrawal.destination_phone || row.request_payload?.provider !== provider ||
                     !Number.isSafeInteger(withdrawal.net_fcfa) || !Number.isSafeInteger(withdrawal.fee_fcfa) ||
                     withdrawal.net_fcfa < 1 || withdrawal.fee_fcfa < 0 || withdrawal.net_fcfa + withdrawal.fee_fcfa !== withdrawal.amount_fcfa) {
@@ -233,16 +361,34 @@ async function dispatch(operationId) {
                 // Older admin handlers set target_net to the reserved amount. The frozen
                 // recipient-pays contract is authoritative for the new withdrawal policy.
                 await row.update({target_net: withdrawal.net_fcfa}, {transaction});
+            } else {
+                if (row.started_at || row.provider_id || row.last_event) {
+                    throw failure('Une tentative de transfert existe déjà. Vérifiez son résultat auprès de KPay.', 409);
+                }
+                const beneficiary = await verifiedHistoricalBeneficiary(withdrawal, transaction);
+                if (!provider || row.request_payload?.provider !== provider || row.request_payload?.phoneNumber !== beneficiary.phone) {
+                    throw failure('Les coordonnées de l’envoi ne correspondent pas au bénéficiaire validé. Annulez le retrait.', 409);
+                }
             }
         }
+        if (managedOperation(row)) await require('./paymentProviders/manager').assertDispatch(row,transaction);
         await row.update({status: 'INITIATING', started_at: new Date()}, {transaction});
         return row;
     });
     if (!operation) return;
     let result;
     try {
-        result = ['DEPOSIT','WALLET_TOPUP'].includes(operation.kind) ? await client.initiatePayment(operation.request_payload) : await client.initiateWithdrawal(operation.request_payload);
+        result = operation.kind === 'PAYOUT'
+            ? await initiatePayout(operation, organizerId)
+            : managedOperation(operation)
+                ? await sequelize.transaction(transaction => startProviderRequest(operation,transaction))
+                : await startProviderRequest(operation);
     } catch (error) {
+        if (error.code === 'PAYOUT_ORGANIZER_SUSPENDED') throw error;
+        if (error.code === 'NO_PAYMENT_PROVIDER') {
+            await restoreUnsent(operation.id);
+            throw error;
+        }
         console.error('[kpay.dispatch]', {
             operationId: operation.id,
             externalId: operation.external_id,
@@ -254,18 +400,18 @@ async function dispatch(operationId) {
             message: error.message,
         });
 
-        if (error.definitive) {
+        if (error.definitive && operation.kind !== 'PAYOUT') {
             await applyEvent({
-                event: operation.kind === 'PAYOUT' ? 'payout.failed' : 'payment.failed',
+                event: 'payment.failed',
                 status: 'FAILED',
                 externalId: operation.external_id,
                 paymentId: operation.provider_id || 'init-rejected',
                 amount: operation.expected_amount
-            }, true);
+            }, true, false, operation.pricing_snapshot?.provider_selection?.provider_code || 'kpay');
         } else {
             await sequelize.transaction(async transaction => {
                 const row = await KpayOperation.findByPk(operation.id, {transaction, lock: transaction.LOCK.UPDATE});
-                if (!terminal.has(row.status)) await row.update({
+                if (operation.kind === 'PAYOUT' ? row.status === 'INITIATING' : !terminal.has(row.status)) await row.update({
                     status: 'UNKNOWN',
                     error_code: 'INIT_UNCERTAIN'
                 }, {transaction});
@@ -276,17 +422,27 @@ async function dispatch(operationId) {
     let replay;
     await sequelize.transaction(async transaction => {
         const row = await KpayOperation.findByPk(operation.id, {transaction, lock: transaction.LOCK.UPDATE});
-        if (!result || typeof result.id !== 'string' || result.externalId !== row.external_id || Number(result.amount) !== row.expected_amount ||
+        if (row.kind === 'PAYOUT' && terminal.has(row.status)) return;
+        if (!result || typeof result.id !== 'string' || result.externalId !== row.external_id ||
+            (row.kind === 'PAYOUT' ? payoutAmount(result.amount) : Number(result.amount)) !== row.expected_amount ||
+            (row.kind === 'PAYOUT' && (!result.id.trim() || (result.isTest != null && typeof result.isTest !== 'boolean') ||
+                (result.currency != null && result.currency !== 'XAF') ||
+                (result.provider != null && result.provider !== row.request_payload.provider) ||
+                (result.phoneNumber != null && result.phoneNumber !== row.request_payload.phoneNumber))) ||
             (result.currency && result.currency !== 'XAF') ||
             (typeof result.isTest === 'boolean' && result.isTest !== (row.environment === 'sandbox')) ||
             (row.provider_id && row.provider_id !== result.id)) {
-            if (!terminal.has(row.status)) await row.update({
+            if (row.kind === 'PAYOUT' ? row.status === 'INITIATING' : !terminal.has(row.status)) await row.update({
                 status: 'UNKNOWN',
                 error_code: 'INIT_RESPONSE_MISMATCH'
             }, {transaction});
             return;
         }
         const changes = {provider_id: result.id, provider_reference: result.reference || null};
+        if (row.kind === 'PAYOUT' && ['FAILED', 'CANCELLED'].includes(result.status)) {
+            if (row.status === 'INITIATING') await row.update({...changes, status: 'UNKNOWN', error_code: 'INIT_UNCERTAIN'}, {transaction});
+            return;
+        }
         // L'URL n'est jamais une preuve de paiement. Seul le webhook signé crédite les votes.
         if (['DEPOSIT','WALLET_TOPUP'].includes(row.kind) && (result.mode === 'GATEWAY' || result.gatewayUrl)) {
             let checkout;
@@ -299,7 +455,8 @@ async function dispatch(operationId) {
             }
             changes.pricing_snapshot = {...(row.pricing_snapshot || {}), checkout_url: checkout.toString()};
         }
-        const fee = optionalAmount(result.feeAmount), net = optionalAmount(result.netAmount);
+        const fee = row.kind === 'PAYOUT' ? payoutAmount(result.feeAmount) : optionalAmount(result.feeAmount);
+        const net = row.kind === 'PAYOUT' ? payoutAmount(result.netAmount) : optionalAmount(result.netAmount);
         if (fee !== null) changes.provider_fee = fee;
         if (net !== null) changes.provider_net = net;
         if (!terminal.has(row.status) && row.status !== 'AWAITING_DETAILS') changes.status = 'PENDING';
@@ -311,7 +468,7 @@ async function dispatch(operationId) {
         // Seul le webhook signé déclenche le succès, même si l'init annonce COMPLETED.
         if (row.status === 'AWAITING_DETAILS' && row.last_event) replay = row.last_event;
     });
-    if (replay) await applyEvent(replay);
+    if (replay) await applyEvent(replay,false,false,operation.pricing_snapshot?.provider_selection?.provider_code || 'kpay');
 }
 
 // Une réponse de consultation authentifiée par nos clés KPay peut servir à
@@ -326,7 +483,7 @@ async function reconcileDeposit(operationId) {
     if (now - (lastLookup.get(operationId) || 0) < 15000) return;
     lastLookup.set(operationId, now);
     try {
-        const response = await client.getPayment(operation.provider_id);
+        const response = await operationClient(operation).getPayment(operation.provider_id);
         // Le GET officiel renvoie directement l'objet paiement.
         const data = response?.data?.payment ?? response?.payment ?? response?.data ?? response;
         if (!data || data.id !== operation.provider_id ||
@@ -360,7 +517,7 @@ async function reconcileDeposit(operationId) {
             provider: data.provider, phoneNumber: data.phoneNumber,
             feeAmount: data.feeAmount, netAmount: data.netAmount,
             failureReason: typeof data.failureReason === 'string' ? data.failureReason.slice(0, 1000) : null,
-        });
+        },false,true,operation.pricing_snapshot?.provider_selection?.provider_code || 'kpay');
         console.info('[kpay.reconcile] Résultat local', {operationId,providerStatus:data.status,localStatus:applied.status,errorCode:applied.error_code||null});
         return applied;
     } catch (error) {
@@ -371,4 +528,4 @@ async function reconcileDeposit(operationId) {
     }
 }
 
-module.exports = {hash, payoutQuote, dispatch, applyEvent, optionalAmount, failure, reconcileDeposit};
+module.exports = {operationClient,hash, payoutQuote, dispatch, applyEvent, optionalAmount, failure, reconcileDeposit};

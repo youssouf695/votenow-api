@@ -1,11 +1,11 @@
 const axios = require('axios');
 const { getConfig } = require('../config/kpay');
 
-async function request(method, path, data) {
+async function request(method, path, data, timeout=15000) {
   const config = getConfig();
   try {
     const response = await axios.request({
-      method, url: config.baseUrl + path, data, timeout: 15000,
+      method, url: config.baseUrl + path, data, timeout,
       maxRedirects: 0, maxContentLength: 1024 * 1024,
       headers: { 'X-API-Key': config.apiKey, 'X-Secret-Key': config.secretKey, 'Content-Type': 'application/json' },
     });
@@ -32,7 +32,7 @@ module.exports = {
   predictProvider: phoneNumber => request('POST', '/api/v1/payments/predict-provider', { phoneNumber }),
   me: () => request('GET', '/api/v1/payments/me'),
   balance: () => request('GET', '/api/v1/payments/balance'),
-  availability: () => request('GET', '/api/v1/payments/availability'),
+  availability: () => request('GET', '/api/v1/payments/availability', undefined, 3500),
   getPayment: providerId => request('GET', `/api/v1/payments/${encodeURIComponent(providerId)}`),
   pricelist,
 };

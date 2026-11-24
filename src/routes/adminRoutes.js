@@ -4,10 +4,12 @@ const adminController = require('../controllers/adminController'); // ← Vérif
 const { auth, authorize } = require('../middleware/auth');
 
 const router = express.Router();
+const campaignCommission = require('../controllers/campaignCommissionController');
 
 // Toutes les routes admin nécessitent authentification et rôle admin
 router.use(auth);
 router.use(authorize('admin'));
+router.use('/finance/payment-providers', require('./paymentProviderAdminRoutes'));
 router.use('/transactions', require('./transactionRoutes'));
 
 // ==================== DASHBOARD ====================
@@ -71,6 +73,8 @@ router.get('/events', [
   query('page').optional().isInt({ min: 1 }),
   query('limit').optional().isInt({ min: 1, max: 100 }),
   query('status').optional().isIn(['draft', 'active', 'paused', 'closed']),
+  query('organizer_id').optional().isUUID(),
+  query('archived').optional().isIn(['true', 'false']),
   query('search').optional().isString()
 ], adminController.getAllEvents);
 
@@ -78,11 +82,14 @@ router.get('/events', [
  * @route   PUT /api/admin/events/:eventId
  * @desc    Modifier un événement
  */
+router.get('/events/:eventId/commission', campaignCommission.getAdmin);
+router.patch('/events/:eventId/commission', campaignCommission.updateAdmin);
+router.get('/events/:eventId', [param('eventId').isUUID()], adminController.getEventDetails);
+
 router.put('/events/:eventId', [
   param('eventId').isUUID(),
   body('status').optional().isIn(['draft', 'active', 'paused', 'closed']),
-  body('commission_rate').optional().isFloat({ min: 0, max: 50 }),
-  body('vote_price_fcfa').optional().isInt({ min: 100 })
+  body('commission_rate').optional().isFloat({ min: 0, max: 50 })
 ], adminController.updateEvent);
 
 // ==================== GESTION DES RETRAITS ====================
@@ -94,7 +101,7 @@ router.put('/events/:eventId', [
 router.get('/withdrawals', [
   query('page').optional().isInt({ min: 1 }),
   query('limit').optional().isInt({ min: 1, max: 100 }),
-  query('status').optional().isIn(['pending', 'processing', 'done', 'rejected'])
+  query('status').optional().isIn(['pending', 'processing', 'done', 'rejected', 'cancelled'])
 ], adminController.getWithdrawals);
 
 /**

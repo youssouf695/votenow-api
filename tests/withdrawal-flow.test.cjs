@@ -7,7 +7,8 @@ function fixture(options={}){
  const selected={id:bid,user_id:'owner',phone:'237699111222',method:'orange_money',full_name:'Beneficiary Test',verified_at:options.unverified?null:new Date('2026-01-01'),deleted_at:null};
  const user={id:'owner',is_verified:true,get balance_fcfa(){return balance}};
  const deps={
-  '../models':{User:{findByPk:async()=>user,decrement:async fields=>{balance-=fields.balance_fcfa}},WithdrawalBeneficiary:{findOne:async q=>q.where.user_id==='owner'&&q.where.id===bid?selected:null},Event:{},Withdrawal:{findOne:async q=>q.where.request_key?stored:null,create:async data=>{created++;stored={id:'withdrawal-fixture',...data};return stored}}},
+  '../services/withdrawalJournal':{postWithdrawal:async withdrawal=>{balance-=withdrawal.amount_fcfa;return balance}},
+  '../models':{User:{findByPk:async()=>user},WithdrawalBeneficiary:{findOne:async q=>q.where.user_id==='owner'&&q.where.id===bid?selected:null},Event:{},Withdrawal:{findOne:async q=>q.where.request_key?stored:null,create:async data=>{created++;stored={id:'withdrawal-fixture',...data,toJSON(){const {toJSON,...values}=this;return values}};return stored}}},
   '../config/database':{transaction:async fn=>fn({LOCK:{UPDATE:'UPDATE'}})},
   'express-validator':{validationResult:()=>({isEmpty:()=>true})},'sequelize':{Op:{in:Symbol('in')}},
   '../services/kpayAmounts':{integer:Number,normalizePhone:v=>v},
@@ -16,7 +17,7 @@ function fixture(options={}){
  return {controller:load('controllers/withdrawalController.js',deps),req:{user:{id:'owner'},body:{amount:3000,beneficiary_id:bid,request_id:uuid,expected_fee:60,expected_net:2940}},state:()=>({balance,stored,created,quotes})};
 }
 test('new withdrawal reserves gross once and freezes verified destination and net',async()=>{
- const f=fixture(),res=response();await f.controller.requestWithdrawal(f.req,res);assert.equal(res.statusCode,201);
+ const f=fixture(),res=response();await f.controller.requestWithdrawal(f.req,res);assert.equal(res.statusCode,201);assert.equal(res.body.withdrawal.pricing_snapshot,undefined);assert.equal(res.body.withdrawal.request_key,undefined);
  const {stored,balance,created}=f.state();assert.equal(balance,2000);assert.equal(created,1);assert.equal(stored.net_fcfa,2940);assert.equal(stored.fee_fcfa,60);assert.equal(stored.amount_fcfa,3000);assert.equal(stored.destination_phone,'237699111222');assert.equal(stored.fee_policy,'recipient_pays_v2');
  const again=response();await f.controller.requestWithdrawal(f.req,again);assert.equal(again.statusCode,200);assert.equal(f.state().balance,2000);assert.equal(f.state().created,1);assert.equal(f.state().quotes,1);
 });
@@ -36,7 +37,7 @@ function payoutFixture({deleted=false,changedFee=false}={}){
  const withdrawal={id:'w',organizer_id:'owner',beneficiary_id:bid,beneficiary_verified_at:verified_at,fee_policy:'recipient_pays_v2',amount_fcfa:3000,fee_fcfa:60,net_fcfa:2940,status:'processing',destination_phone:'237699111222',destination_name:'Beneficiary Test',method:'orange_money',pricing_snapshot:{rate:.02,rounding:'exact',environment:'sandbox'}};
  const operation={id:'o',kind:'PAYOUT',status:'CREATED',domain_id:'w',external_id:'external',expected_amount:3000,target_net:3000,environment:'sandbox',request_payload:{amount:3000,phoneNumber:withdrawal.destination_phone,provider:'ORANGE_CMR'},async update(changes){Object.assign(this,changes)}};
  const beneficiary=deleted?null:{phone:withdrawal.destination_phone,full_name:withdrawal.destination_name,verified_at,method:withdrawal.method};
- const deps={'../models':{Withdrawal:{findByPk:async()=>withdrawal},WithdrawalBeneficiary:{findOne:async()=>beneficiary},KpayOperation:{findByPk:async()=>operation}},'../config/database':{transaction:async fn=>fn({LOCK:{UPDATE:'UPDATE'}})},'./kpayClient':{initiateWithdrawal:async data=>{sends++;assert.equal(data.amount,3000);return {id:'provider',externalId:'external',amount:3000,netAmount:2940,feeAmount:60}}},'../config/kpay':{getConfig:()=>({mode:'sandbox'})},'./kpayAmounts':{integer:Number,normalizePhone:x=>x,grossForNet:()=>{throw Error('Unexpected legacy quote')}},'./recipientPayout':{recipientQuote:async()=>({gross:3000,net:2940,fee:changedFee?61:60,rate:.02,rounding:'exact',environment:'sandbox'})}};
+ const deps={'./withdrawalJournal':{postWithdrawal:async()=>assert.fail('No terminal movement expected')},'../models':{User:{findByPk:async()=>({id:'owner'})},Withdrawal:{findByPk:async()=>withdrawal},WithdrawalBeneficiary:{findOne:async()=>beneficiary},KpayOperation:{findByPk:async()=>operation}},'../config/database':{transaction:async fn=>fn({LOCK:{UPDATE:'UPDATE'}}),query:async()=>[[]]},'./kpayClient':{initiateWithdrawal:async data=>{sends++;assert.equal(data.amount,3000);return {id:'provider',externalId:'external',amount:3000,netAmount:2940,feeAmount:60}}},'../config/kpay':{getConfig:()=>({mode:'sandbox'})},'./kpayAmounts':{integer:Number,normalizePhone:x=>x,grossForNet:()=>{throw Error('Unexpected legacy quote')}},'./recipientPayout':{recipientQuote:async()=>({gross:3000,net:2940,fee:changedFee?61:60,rate:.02,rounding:'exact',environment:'sandbox'})}};
  return {ops:load('services/kpayOperations.js',deps,{KPAY_PAYOUT_PRICING_CONFIRMED:'true'}),withdrawal,operation,sends:()=>sends};
 }
 test('dispatcher sets recipient net from frozen reservation even with an older admin handler, and sends once',async()=>{

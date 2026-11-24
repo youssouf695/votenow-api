@@ -1,7 +1,10 @@
-const { User, Event, Payment, Withdrawal, Vote, Candidate, Commission } = require('../models');
+const { User, Event, Payment, Withdrawal, Vote, Candidate, Commission, KpayOperation } = require('../models');
 const sequelize = require('../config/database'); // ✅ import direct
 const { Op } = require('sequelize');
 const { validationResult } = require('express-validator');
+const { postWithdrawal } = require('../services/withdrawalJournal');
+const { changeLocked: changeCommissionLocked } = require('../services/campaignCommission');
+const { campaignVotePrice } = require('../services/campaignVotePrice');
 
 
 // ==================== DASHBOARD ADMIN ====================
@@ -83,6 +86,8 @@ exports.getDashboard = async (req, res) => {
 
 exports.getUsers = async (req, res) => {
   try {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) return res.status(400).json({ errors: errors.array() });
     const { page = 1, limit = 20, role, search, verified } = req.query;
     const offset = (page - 1) * parseInt(limit);
 
@@ -101,7 +106,7 @@ exports.getUsers = async (req, res) => {
     const users = await User.findAndCountAll({
       where,
       attributes: { exclude: ['password_hash'] },
-      order: [['created_at', 'DESC']],
+      order: [['created_at', 'DESC'], ['id', 'DESC']],
       limit: parseInt(limit),
       offset
     });
@@ -299,14 +304,20 @@ exports.deleteUser = async (req, res) => {
 
 exports.getAllEvents = async (req, res) => {
   try {
-    const { page = 1, limit = 20, status, search } = req.query;
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) return res.status(400).json({ errors: errors.array() });
+    const { page = 1, limit = 20, status, search, organizer_id, archived } = req.query;
     const offset = (page - 1) * parseInt(limit);
 
     const where = {};
     if (status) where.status = status;
+    if (organizer_id) where.organizer_id = organizer_id;
+    if (archived === 'true') where.archived_at = { [Op.ne]: null };
+    if (archived === 'false') where.archived_at = null;
     if (search) {
       where[Op.or] = [
         { title:       { [Op.iLike]: `%${search}%` } },
+        { slug:        { [Op.iLike]: `%${search}%` } },
         { description: { [Op.iLike]: `%${search}%` } }
       ];
     }
@@ -318,7 +329,7 @@ exports.getAllEvents = async (req, res) => {
         as: 'organizer',       // ✅ alias correct
         attributes: ['id', 'full_name', 'email']
       }],
-      order: [['created_at', 'DESC']],
+      order: [['created_at', 'DESC'], ['id', 'DESC']],
       limit: parseInt(limit),
       offset
     });
@@ -336,39 +347,61 @@ exports.getAllEvents = async (req, res) => {
   }
 };
 
+exports.getEventDetails = async (req, res) => {
+  const errors = validationResult(req);
+  if (!errors.isEmpty()) return res.status(400).json({ errors: errors.array() });
+  try {
+    const event = await Event.findByPk(req.params.eventId, {
+      attributes: ['id', 'organizer_id', 'slug', 'title', 'description', 'status', 'archived_at', 'created_at',
+        'starts_at', 'ends_at', 'vote_price_fcfa', 'total_votes', 'total_collected'],
+      include: [{ model: User, as: 'organizer', attributes: ['id', 'full_name', 'email'] }]
+    });
+    if (!event) return res.status(404).json({ error: 'Campagne introuvable' });
+    return res.set('Cache-Control', 'no-store').json({ event });
+  } catch (error) {
+    console.error('Erreur détail campagne admin', { code: error.original?.code });
+    return res.status(503).json({ error: 'Campagne temporairement indisponible' });
+  }
+};
 
 exports.updateEvent = async (req, res) => {
   try {
     const { eventId } = req.params;
-    const { status, commission_rate, vote_price_fcfa } = req.body;
-
-    const event = await Event.findByPk(eventId);
-    if (!event) {
-      return res.status(404).json({ error: 'Événement non trouvé' });
-    }
-
-    if (event.archived_at) return res.status(409).json({ error: 'Campagne archivée : historique conservé, modification interdite.' });
-    const updates = {};
-    if(status==='draft'&&event.status!=='draft')return res.status(409).json({error:'Une campagne déjà publiée peut être mise en pause ou clôturée, pas remise en création.'});
-    if(status==='active'){const [unfinished]=await sequelize.query('SELECT event_id FROM campaign_setups WHERE event_id=:id AND published_at IS NULL',{replacements:{id:event.id}});if(unfinished.length)return res.status(409).json({error:'Le parcours de création doit être terminé avant publication.'});}
-    if(event.status==='draft'&&status==='active')return res.status(409).json({error:'La publication doit être effectuée par le parcours de création de la campagne.'});
-    if (status          !== undefined) updates.status          = status;
-    if (commission_rate !== undefined) updates.commission_rate = commission_rate;
-    if (vote_price_fcfa !== undefined) {
-      if (!Number.isInteger(Number(vote_price_fcfa)) || Number(vote_price_fcfa) < 100 || Number(vote_price_fcfa) > 10000) return res.status(400).json({ error: 'Le prix d’un vote doit être compris entre 100 et 10 000 FCFA.' });
-      updates.vote_price_fcfa = vote_price_fcfa;
-    }
-
-    await event.update(updates);
-
-    res.json({ message: 'Événement mis à jour', event });
-
+    const { status, commission_rate, vote_price_fcfa, commission_reason, reason } = req.body;
+    const event = await sequelize.transaction(async transaction => {
+      const locked = await Event.findByPk(eventId, {transaction, lock: transaction.LOCK.UPDATE});
+      const fail = (message, status) => Object.assign(new Error(message), {status});
+      if (!locked) throw fail('Événement non trouvé',404);
+      if (locked.archived_at) throw fail('Campagne archivée : historique conservé, modification interdite.',409);
+      if (status === 'draft' && locked.status !== 'draft') {
+        throw fail('Une campagne déjà publiée peut être mise en pause ou clôturée, pas remise en création.',409);
+      }
+      if (status === 'active') {
+        const [unfinished] = await sequelize.query('SELECT event_id FROM campaign_setups WHERE event_id=:id AND published_at IS NULL',{
+          replacements:{id:locked.id},transaction
+        });
+        if (unfinished.length) throw fail('Le parcours de création doit être terminé avant publication.',409);
+        if (locked.status === 'draft') throw fail('La publication doit être effectuée par le parcours de création de la campagne.',409);
+      }
+      const updates = {};
+      if (status !== undefined) updates.status = status;
+      if (vote_price_fcfa !== undefined) {
+        const price = campaignVotePrice(vote_price_fcfa, locked.vote_price_fcfa);
+        if (price !== locked.vote_price_fcfa) updates.vote_price_fcfa = price;
+      }
+      if (commission_rate !== undefined) {
+        await changeCommissionLocked(locked,req.user,{commission_rate,reason:commission_reason??reason},transaction);
+      }
+      await locked.update(updates,{transaction});
+      return locked;
+    });
+    return res.json({ message: 'Événement mis à jour', event });
   } catch (error) {
+    if (error.status) return res.status(error.status).json({error:error.message});
     console.error('Erreur admin updateEvent:', error.message);
-    res.status(500).json({ error: error.message });
+    return res.status(500).json({ error: error.message });
   }
 };
-
 
 // ==================== GESTION RETRAITS ====================
 
@@ -395,13 +428,13 @@ exports.getWithdrawals = async (req, res) => {
           required: false
         }
       ],
-      order: [['requested_at', 'DESC']],
+      order: [['requested_at', 'DESC'], ['id', 'DESC']],
       limit: parseInt(limit),
       offset
     });
 
-    // ✅ COUNT corrigé
-    const stats = await Withdrawal.findAll({
+    const withdrawalIds = withdrawals.rows.map(row => row.id);
+    const [stats, operations] = await Promise.all([Withdrawal.findAll({
       attributes: [
         'status',
         [sequelize.fn('COUNT', sequelize.col('Withdrawal.id')), 'count'],
@@ -409,13 +442,21 @@ exports.getWithdrawals = async (req, res) => {
       ],
       group: ['status'],
       raw: true
-    });
+    }), withdrawalIds.length ? KpayOperation.findAll({
+      where: { kind: 'PAYOUT', domain_id: { [Op.in]: withdrawalIds } },
+      attributes: ['domain_id', 'status', 'provider_reference'],
+      raw: true
+    }) : []]);
+    const operationsByWithdrawal = new Map(operations.map(operation => [operation.domain_id, operation]));
 
     res.json({
       total:       withdrawals.count,
       page:        parseInt(page),
       totalPages:  Math.ceil(withdrawals.count / parseInt(limit)),
-      withdrawals: withdrawals.rows,
+      withdrawals: withdrawals.rows.map(row => {
+        const operation = operationsByWithdrawal.get(row.id);
+        return { ...row.toJSON(), provider_status: operation?.status ?? null, provider_reference: operation?.provider_reference ?? null };
+      }),
       stats: stats.reduce((acc, s) => {
         acc[s.status] = {
           count: parseInt(s.count),
@@ -444,23 +485,35 @@ exports.processWithdrawal = async (req, res) => {
     if (!['approve', 'reject'].includes(action)) throw failure('Action invalide');
     const snapshot = await Withdrawal.findByPk(req.params.withdrawalId);
     if (!snapshot) throw failure('Demande introuvable', 404);
-    // Une seconde approbation ne déclenche jamais un second transfert.
-    if (action === 'approve' && snapshot.status === 'processing') return res.json({ message: 'Transfert déjà en cours de vérification.', withdrawal: snapshot });
+    if (action === 'approve' && snapshot.status === 'processing') {
+      const operation = await KpayOperation.findOne({ where: { kind: 'PAYOUT', domain_id: snapshot.id } });
+      if (!operation) throw failure('Opération KPay introuvable pour ce retrait.', 409);
+      if (operation.status === 'CREATED') await dispatch(operation.id);
+      const withdrawal = await Withdrawal.findByPk(snapshot.id);
+      return res.json({ message: withdrawal.status === 'done' ? 'Retrait confirmé.' : withdrawal.status === 'rejected' ? 'Transfert refusé. Montant restitué.' : 'Transfert déjà en cours de vérification.', withdrawal });
+    }
     if (snapshot.status !== 'pending') throw failure('Demande déjà traitée', 409);
     const config = action === 'approve' ? getConfig() : null;
     const quote = action === 'approve' ? await payoutQuote(snapshot) : null;
     const operationId = await sequelize.transaction(async transaction => {
-      const withdrawal = await Withdrawal.findByPk(snapshot.id, { transaction, lock: transaction.LOCK.UPDATE });
-      if (withdrawal.status !== 'pending') throw failure('Demande déjà traitée', 409);
+      const lock = { transaction, lock: transaction.LOCK.UPDATE };
+      if (action === 'reject') {
+        // Match organizer cancellation: lock the balance owner before the pending withdrawal.
+        await User.findByPk(snapshot.organizer_id, lock);
+      }
+      const withdrawal = action === 'reject'
+        ? await Withdrawal.findOne({ where: { id: snapshot.id, organizer_id: snapshot.organizer_id, status: 'pending' }, ...lock })
+        : await Withdrawal.findByPk(snapshot.id, lock);
+      if (withdrawal?.status !== 'pending') throw failure('Demande déjà traitée', 409);
       if (withdrawal.amount_fcfa !== snapshot.amount_fcfa || withdrawal.method !== snapshot.method || withdrawal.destination_phone !== snapshot.destination_phone) throw failure('Demande modifiée. Actualisez.', 409);
       if (action === 'reject') {
-        await User.increment({ balance_fcfa: withdrawal.amount_fcfa }, { where: { id: withdrawal.organizer_id }, transaction });
+        await postWithdrawal(withdrawal, 'release', 'admin_reject', transaction);
         await withdrawal.update({ status: 'rejected', processed_by: req.user.id, processed_at: new Date(), rejection_reason: rejection_reason || 'Demande rejetée par l’administrateur' }, { transaction });
         return null;
       }
       const externalId = `vn-w-${withdrawal.id}`;
       const phone = normalizePhone(withdrawal.destination_phone);
-      const provider = { mtn_momo: 'MTN_MOMO_CMR', orange_money: 'ORANGE_CMR' }[withdrawal.method];
+      const provider = quote.network || { mtn_momo: 'MTN_MOMO_CMR', orange_money: 'ORANGE_CMR' }[withdrawal.method];
       const operation = await KpayOperation.create({ kind: 'PAYOUT', domain_id: withdrawal.id, request_key: withdrawal.id,
         external_id: externalId, fingerprint: hash([withdrawal.id, withdrawal.amount_fcfa, phone, provider]),
         environment: config.mode, status: 'CREATED', expected_amount: quote.gross, target_net: withdrawal.amount_fcfa, pricing_snapshot: quote,

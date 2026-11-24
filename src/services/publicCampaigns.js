@@ -12,6 +12,16 @@ function buildPublicQuery(query, now = new Date()) {
   else if (status === 'active') where = { status: 'active', [Op.and]: [notEnded, { [Op.or]: [{ starts_at: null }, { starts_at: { [Op.lte]: now } }] }] };
   else where = { status: { [Op.in]: ['active', 'closed'] } };
   where.archived_at = null;
+  if (query.search !== undefined) {
+    if (typeof query.search !== 'string' || query.search.length > 120) {
+      throw Object.assign(new Error('Recherche de campagne invalide'), { status: 400 });
+    }
+    const term = query.search.trim();
+    if (term) {
+      const pattern = `%${term.replace(/[\\%_]/g, '\\$&')}%`;
+      where[Op.and] = [...(where[Op.and] || []), { title: { [Op.iLike]: pattern } }];
+    }
+  }
   return { where, page, limit };
 }
 function publicStatus(event, now = Date.now()) {

@@ -73,6 +73,7 @@ test('reconciliation retains failureReason and never credits a failed payment', 
  };
  const api = load('services/kpayOperations.js', {
    '../models':models,'../config/database':{transaction:async fn=>fn({LOCK:{UPDATE:'UPDATE'}})},
+   './withdrawalJournal':{postWithdrawal:async()=>{throw Error('Unexpected payout accounting')}},
    './kpayClient':{getPayment:async()=>({id:'provider',externalId:'ext',amount:100,currency:'XAF',isTest:false,status:'FAILED',failureReason:'INSUFFICIENT_FUNDS'})},
    '../config/kpay':{getConfig:()=>({mode:'production'})},
    './kpayAmounts':{normalizePhone:v=>v},

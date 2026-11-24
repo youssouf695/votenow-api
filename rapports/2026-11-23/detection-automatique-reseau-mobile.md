@@ -1,0 +1,5 @@
+# Détection automatique du réseau mobile
+Le sélecteur manuel faisait doublon avec la détection backend. Le formulaire public demande uniquement le numéro camerounais et le consentement au montant. `VoteClient.jsx` et `lib/i18n/en.json` ont été ajustés. Les nouvelles tentatives omettent le réseau. Le contrôleur de paiement continue d’utiliser la réponse du prestataire pour reconnaître le réseau et vérifier sa disponibilité. Les anciennes tentatives conservent leurs paramètres et leur UUID.
+Tests ciblés des devis et tentatives, syntaxe API et diff réussis. Aucun paiement réel, migration ou déploiement. État final — terminé.
+
+Le champ affiche maintenant un badge avec icône et libellé lorsque les neuf chiffres correspondent à un préfixe connu. Cet indice visuel ne change ni la validation ni le routage. Six cas ciblés passent, dont numéro incomplet, préfixe inconnu et format avec indicatif. [Plan de numérotation communiqué à l’UIT](https://www.itu.int/dms_pub/itu-t/oth/02/02/T02020000240001PDFF.pdf)

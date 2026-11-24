@@ -2,6 +2,7 @@ const { Event, Candidate, User, CampaignCategory } = require('../models');
 const sequelize = require('../config/database'); // ✅ import direct
 const { validationResult } = require('express-validator');
 const { Op } = require('sequelize');
+const { campaignVotePrice } = require('../services/campaignVotePrice');
 
 
 // ==================== UTILITAIRE ====================
@@ -30,7 +31,7 @@ exports.createEvent = async (req, res) => {
       allow_anonymous, show_results, max_candidates
     } = req.body;
 
-    if (!Number.isInteger(Number(vote_price_fcfa)) || Number(vote_price_fcfa) < 100 || Number(vote_price_fcfa) > 10000) return res.status(400).json({ error: 'Le prix d’un vote doit être compris entre 100 et 10 000 FCFA.' });
+    const price = campaignVotePrice(vote_price_fcfa);
 
     // Slug unique
     let slug  = generateSlug(title);
@@ -47,7 +48,7 @@ exports.createEvent = async (req, res) => {
       cover_image_url: req.body.cover_image_url || null,
       avatar_url: req.body.avatar_url || null,
       site_config: req.body.site_config ? require('../services/campaignSettings').settings(req.body.site_config) : null,
-      vote_price_fcfa: vote_price_fcfa || 200,
+      vote_price_fcfa: price,
       votes_per_payment: votes_per_payment || 1,
       commission_rate: 15.00,
       max_candidates:  max_candidates  || null,
@@ -266,7 +267,11 @@ exports.updateEvent = async (req, res) => {
       if (req.body[field] !== undefined) updates[field] = req.body[field];
     });
 
-    if (updates.vote_price_fcfa !== undefined && (!Number.isInteger(Number(updates.vote_price_fcfa)) || Number(updates.vote_price_fcfa) < 100 || Number(updates.vote_price_fcfa) > 10000)) return res.status(400).json({ error: 'Le prix d’un vote doit être compris entre 100 et 10 000 FCFA.' });
+    if (updates.vote_price_fcfa !== undefined) {
+      const price = campaignVotePrice(updates.vote_price_fcfa, event.vote_price_fcfa);
+      if (price === event.vote_price_fcfa) delete updates.vote_price_fcfa;
+      else updates.vote_price_fcfa = price;
+    }
     await event.update(updates);
 
     res.json({ message: 'Événement mis à jour', event });

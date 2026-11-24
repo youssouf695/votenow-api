@@ -1,8 +1,14 @@
-const { Withdrawal, User, Event, WithdrawalBeneficiary } = require('../models');
+const { Withdrawal, User, Event, WithdrawalBeneficiary, KpayOperation } = require('../models');
 const sequelize = require('../config/database'); // ✅ import direct
 const { validationResult } = require('express-validator');
 const { Op } = require('sequelize');
+const { postWithdrawal } = require('../services/withdrawalJournal');
 
+
+function publicWithdrawal(row) {
+  const {pricing_snapshot,request_key,...withdrawal}=row.toJSON();
+  return withdrawal;
+}
 
 // ==================== 1. DEMANDER UN RETRAIT ====================
 exports.requestWithdrawal = async (req, res) => {
@@ -17,7 +23,7 @@ exports.requestWithdrawal = async (req, res) => {
     const existing = await Withdrawal.findOne({where:{request_key:req.body.request_id}});
     if(existing){
       if(existing.organizer_id!==req.user.id||existing.amount_fcfa!==amount||existing.beneficiary_id!==req.body.beneficiary_id||(existing.event_id||null)!==(req.body.event_id||null)) throw Object.assign(new Error('Cette référence correspond à une autre demande.'),{status:409});
-      const user=await User.findByPk(req.user.id);return res.json({message:'Demande déjà enregistrée',withdrawal:existing,new_balance:user.balance_fcfa});
+      const user=await User.findByPk(req.user.id);return res.json({message:'Demande déjà enregistrée',withdrawal:publicWithdrawal(existing),new_balance:user.balance_fcfa});
     }
     const selected=await WithdrawalBeneficiary.findOne({where:{id:req.body.beneficiary_id,user_id:req.user.id,deleted_at:null}});
     if(!selected?.verified_at)throw Object.assign(new Error('Sélectionnez un bénéficiaire validé par email.'),{status:400});
@@ -43,15 +49,15 @@ exports.requestWithdrawal = async (req, res) => {
         const event = await Event.findOne({ where: { id: req.body.event_id, organizer_id: user.id }, transaction });
         if (!event) throw Object.assign(new Error('Événement non trouvé'), { status: 404 });
       }
-      await User.decrement({ balance_fcfa: amount }, { where: { id: user.id }, transaction });
       const withdrawal = await Withdrawal.create({ organizer_id: user.id, event_id: req.body.event_id || null,
         fee_policy:'recipient_pays_v2',fee_fcfa:quote.fee,net_fcfa:quote.net,pricing_snapshot:quote,
         beneficiary_verified_at: beneficiary.verified_at,
         beneficiary_id: beneficiary.id, request_key: req.body.request_id, destination_name: beneficiary.full_name,
         amount_fcfa: amount, method, destination_phone: phone, status: 'pending' }, { transaction });
-      return { withdrawal, new_balance: user.balance_fcfa - amount };
+      const newBalance = await postWithdrawal(withdrawal, 'reserve', 'request', transaction);
+      return { withdrawal, new_balance: newBalance };
     });
-    return res.status(201).json({ message: 'Demande de retrait enregistrée', ...result });
+    return res.status(201).json({ message: 'Demande de retrait enregistrée', ...result, withdrawal:publicWithdrawal(result.withdrawal) });
   } catch (error) { return res.status(error.status || 500).json({ error: error.status ? error.message : 'Demande non enregistrée' }); }
 };
 
@@ -90,7 +96,7 @@ exports.getMyWithdrawals = async (req, res) => {
     });
 
     res.json({
-      withdrawals: withdrawals.rows,
+      withdrawals: withdrawals.rows.map(publicWithdrawal),
       pagination: {
         total: withdrawals.count,
         page: parseInt(page),
@@ -132,7 +138,7 @@ exports.getWithdrawalDetails = async (req, res) => {
       return res.status(404).json({ error: 'Demande non trouvée' });
     }
 
-    res.json({ withdrawal });
+    res.json({ withdrawal:publicWithdrawal(withdrawal) });
 
   } catch (error) {
     console.error('Erreur getWithdrawalDetails:', error.message);
@@ -145,13 +151,29 @@ exports.getWithdrawalDetails = async (req, res) => {
 exports.cancelWithdrawal = async (req, res) => {
   try {
     const result = await sequelize.transaction(async transaction => {
+      const where = { id: req.params.id, organizer_id: req.user.id };
+      const snapshot = await Withdrawal.findOne({ where, transaction });
+      let operation;
+      if (snapshot?.status === 'processing' && snapshot.fee_policy !== 'recipient_pays_v2') {
+        // Dispatch locks the operation before the withdrawal.
+        operation = await KpayOperation.findOne({
+          where: { kind: 'PAYOUT', domain_id: snapshot.id }, transaction, lock: transaction.LOCK.UPDATE
+        });
+      }
       await User.findByPk(req.user.id, { transaction, lock: transaction.LOCK.UPDATE });
-      const withdrawal = await Withdrawal.findOne({ where: { id: req.params.id, organizer_id: req.user.id }, transaction, lock: transaction.LOCK.UPDATE });
-      if (!withdrawal || withdrawal.status !== 'pending') throw Object.assign(new Error('Demande déjà traitée ou introuvable'), { status: 409 });
-      await User.increment({ balance_fcfa: withdrawal.amount_fcfa }, { where: { id: req.user.id }, transaction });
+      // Without the operation lock, do not wait on a withdrawal already claimed for dispatch.
+      const withdrawal = await Withdrawal.findOne({
+        where: { ...where, status: operation ? 'processing' : 'pending' },
+        transaction,
+        lock: transaction.LOCK.UPDATE
+      });
+      const unsentHistorical = withdrawal?.status === 'processing' && withdrawal.fee_policy !== 'recipient_pays_v2' &&
+        operation?.status === 'CREATED' && !operation.started_at && !operation.provider_id && !operation.last_event;
+      if (withdrawal?.status !== 'pending' && !unsentHistorical) throw Object.assign(new Error('Demande déjà traitée ou introuvable'), { status: 409 });
+      if (unsentHistorical) await operation.update({ status: 'CANCELLED', completed_at: new Date() }, { transaction });
+      const newBalance = await postWithdrawal(withdrawal, 'release', 'organizer_cancel', transaction, unsentHistorical ? operation.id : null);
       await withdrawal.update({ status: 'cancelled', completed_at: new Date() }, { transaction });
-      const user = await User.findByPk(req.user.id, { transaction });
-      return { new_balance: user.balance_fcfa };
+      return { new_balance: newBalance };
     });
     return res.json({ message: 'Demande annulée', ...result });
   } catch (error) { return res.status(error.status || 500).json({ error: error.status ? error.message : 'Annulation indisponible' }); }
