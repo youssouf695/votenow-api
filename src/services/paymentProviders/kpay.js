@@ -1,4 +1,5 @@
 const client = require('../kpayClient');
+const {grossForNet}=require('../kpayAmounts');
 const {getConfig} = require('../../config/kpay');
 
 const {networks:network,depositHealth}=require('./mobileHealth');
@@ -25,6 +26,13 @@ module.exports = {
       rate_units: typeof rate === 'number' ? Math.round(rate * 100000000) : null,
       rounding: route.direction === 'payout' ? process.env.KPAY_PAYOUT_ROUNDING || 'exact' : 'round_fee'
     };
+  },
+  quoteExactNet(route, amount, tariff) {
+    const certifiedRails = (process.env.KPAY_PAYOUT_EXACT_NET_RAILS || '').split(',').map(rail => rail.trim());
+    if (process.env.KPAY_PAYOUT_PRICING_CONFIRMED !== 'true' || !certifiedRails.includes(route.rail) ||
+        !process.env.KPAY_PAYOUT_ROUNDING ||
+        tariff.source !== 'adapter' || tariff.fixed_fee !== 0 || tariff.min_fee !== 0 || tariff.max_fee !== null) return null;
+    return {...grossForNet(amount, tariff.rate_units / 100000000, tariff.rounding), net_contract:'gross_less_fee_v1'};
   },
   initiate(direction, payload) {
     return direction === 'payout' ? client.initiateWithdrawal(payload) : client.initiatePayment(payload);

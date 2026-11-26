@@ -5,23 +5,28 @@ const {User,Payment,Event,Candidate,Vote,Commission,KpayOperation}=require('../m
 const {integer,normalizePhone}=require('./kpayAmounts');
 const {failure,hash}=require('./kpayOperations');
 const kpay=require('./kpayClient'),{getConfig}=require('../config/kpay');
+const {POLICY,topupFee}=require('./walletTopupPricing');
 function uuid(value){if(typeof value!=='string'||!/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i.test(value))throw failure('Référence invalide');return value}
 async function account(user,transaction){const row=await WalletAccount.findOne({where:{user_id:user.id},transaction,...(transaction?{lock:transaction.LOCK.UPDATE}:{})});if(!row)throw failure('Activez votre VoteNow Card.',409);return row}
 async function quote(amount,phone){
  amount=integer(amount);if(amount<100||amount>1000000)throw failure('Recharge de 100 à 1 000 000 FCFA requise');phone=normalizePhone(phone);
  const config=getConfig();
- if(process.env.PAYMENT_PROVIDER_MANAGER_ENABLED==='true'){
-  const pricing=await require('./paymentProviders/manager').select({environment:config.mode,direction:'deposit',amount,phone});
-  return {...pricing,checkout_fee:pricing.fee,checkout_total:pricing.gross,gross:amount,net:amount,fee:0,phone,provider:pricing.network,fee_policy:'same_as_vote'};
+ const withFee=process.env.WALLET_TOPUP_FEES_ENABLED==='true'&&config.mode==='production';
+ const tariff=withFee?await require('./votenowFees').cardTopupTariff():null;
+ const fee=tariff?topupFee(amount,tariff.rate_bps):0;
+ const gross=amount+fee;
+ if(tariff||process.env.PAYMENT_PROVIDER_MANAGER_ENABLED==='true'){
+  const pricing=await require('./paymentProviders/manager').select({environment:config.mode,direction:'deposit',amount:gross,phone});
+  return {...pricing,gross,net:amount,fee,phone,provider:pricing.network,
+   fee_policy:tariff?POLICY:'same_as_vote',
+   ...(tariff?{votenow_fee_version_id:tariff.id,votenow_payment_fee_fcfa:fee,votenow_payment_fee_bps:tariff.rate_bps}:{})};
  }
  const predicted=await kpay.predictProvider(phone);
  if(predicted.country!=='CMR'||!['MTN_MOMO_CMR','ORANGE_CMR'].includes(predicted.provider))throw failure('Opérateur camerounais non pris en charge',422);
- let availability;try{availability=await kpay.availability()}catch{throw failure('Disponibilité Mobile Money momentanément invérifiable. Réessayez plus tard.',503)}
- const provider=Array.isArray(availability)?availability.find(row=>row.country==='CMR')?.providers?.find(row=>row.provider===predicted.provider):null;
- if(provider?.operationTypes?.DEPOSIT!=='OPERATIONAL')throw failure('Cet opérateur Mobile Money est actuellement indisponible.',503);
- // Same amount contract as a vote: KPay handles customer fees at checkout.
- // No additional VoteNow top-up fee, commission or gross-for-net calculation.
- return {gross:amount,net:amount,fee:0,phone,provider:predicted.provider,environment:config.mode,fee_policy:'same_as_vote'};
+ const rail=predicted.provider==='MTN_MOMO_CMR'?'mtn_momo':'orange_money';
+ const health=await require('./paymentProviders/mobileHealth').depositHealth(rail);
+ if(!['available','delayed'].includes(health))throw failure('Cet opérateur Mobile Money est actuellement indisponible.',503);
+ return {gross:amount,net:amount,fee:0,phone,rail,provider:predicted.provider,environment:config.mode,fee_policy:'same_as_vote'};
 }
 async function initiate(user,input){
  if(!user.is_verified)throw failure('Un compte vérifié est nécessaire.',403);
@@ -29,13 +34,19 @@ async function initiate(user,input){
  let topup=await WalletTopup.findOne({where:{request_key}});
  if(topup){if(topup.wallet_id!==wallet.id||topup.amount_fcfa!==amount||topup.phone!==phone)throw failure('Cette référence correspond à une autre recharge.',409);return topup}
  const pricing=await quote(amount,phone);
- if(pricing.gross!==input.expected_gross||pricing.fee!==input.expected_fee)throw failure('Les frais ont changé. Vérifiez le nouveau récapitulatif.',409);
+ if(pricing.gross!==input.expected_gross||pricing.fee!==input.expected_fee||
+    (pricing.votenow_fee_version_id && String(pricing.votenow_fee_version_id)!==input.expected_tariff_version)||
+    (input.expected_rail && pricing.rail!==input.expected_rail)) {
+  throw Object.assign(failure('Le devis a changé. Vérifiez le nouveau récapitulatif.',409),{code:'TOPUP_QUOTE_CHANGED'});
+ }
  return db.transaction(async transaction=>{
-  await account(user,transaction);topup=await WalletTopup.findOne({where:{request_key},transaction});
+  const locked=await account(user,transaction);topup=await WalletTopup.findOne({where:{request_key},transaction});
   if(topup){if(topup.wallet_id!==wallet.id||topup.amount_fcfa!==amount||topup.phone!==phone)throw failure('Référence déjà utilisée.',409);return topup}
+  const card=await require('./walletCard').forWallet(locked.id,transaction);
+  if(card&&card.status!=='active')throw failure('Réactivez votre Card avant de la recharger.',409);
   const id=crypto.randomUUID(),externalId=`vn-w-${id}`;
   topup=await WalletTopup.create({id,wallet_id:wallet.id,request_key,amount_fcfa:amount,gross_fcfa:pricing.gross,phone,provider:pricing.provider,pricing_snapshot:pricing,status:'pending'},{transaction});
-  await KpayOperation.create({kind:'WALLET_TOPUP',domain_id:id,request_key,external_id:externalId,fingerprint:hash([wallet.id,amount,phone]),environment:pricing.environment,expected_amount:pricing.gross,target_net:amount,status:'CREATED',...(pricing.provider_selection?{pricing_snapshot:pricing}:{}),request_payload:{amount:pricing.gross,currency:'XAF',provider:pricing.provider,phoneNumber:phone,externalId,description:'Recharge VoteNow Card',metadata:{walletTopupId:id}}},{transaction});
+  await KpayOperation.create({kind:'WALLET_TOPUP',domain_id:id,request_key,external_id:externalId,fingerprint:hash([wallet.id,amount,phone]),environment:pricing.environment,expected_amount:pricing.gross,target_net:amount,status:'CREATED',pricing_snapshot:pricing,request_payload:{amount:pricing.gross,currency:'XAF',provider:pricing.provider,phoneNumber:phone,externalId,description:'Recharge VoteNow Card',metadata:{walletTopupId:id}}},{transaction});
   return topup;
  });
 }
@@ -57,6 +68,7 @@ async function spend(user,input,ip){
   const wallet=await account(user,transaction);
   const replay=await WalletPurchase.findOne({where:{request_key},transaction});
   if(replay){if(replay.user_id!==user.id||replay.fingerprint!==fingerprint)throw failure('Référence liée à un autre vote.',409);return Payment.findByPk(replay.payment_id,{transaction})}
+  if(await require('./walletCard').forWallet(wallet.id,transaction))throw failure('Les votes avec cette Card nécessitent une autorisation par PIN.',409);
   const {event,price}=await votePrice({event_id,candidate_id,votes_count:count,nominal_budget_fcfa:input.nominal_budget_fcfa},transaction);
   if(price.gross!==expected||price.count!==count)throw Object.assign(failure('Le prix a changé. Actualisez le devis et confirmez le nouveau montant.',409),{code:'VOTE_QUOTE_CHANGED'});
   if(wallet.balance_fcfa<price.gross)throw failure('Solde VoteNow Card insuffisant. Rechargez votre portefeuille.',422);

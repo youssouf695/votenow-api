@@ -36,10 +36,10 @@ async function votePrice({event_id,candidate_id,votes_count,nominal_budget_fcfa}
   return {unitPrice:event.vote_price_fcfa,price:amounts(event.vote_price_fcfa,count,event.commission_rate,maxVotes),event};
 }
 
-function quoteBreakdown(unitPrice,price,method) {
+function quoteBreakdown(unitPrice,price,method,tariff) {
   const card=method==='votenow_card';
   if (!card) {
-    const value=process.env.VOTENOW_KPAY_VOTE_FEE_BPS ?? '500';
+    const value=tariff?.rate_bps ?? process.env.VOTENOW_KPAY_VOTE_FEE_BPS ?? '500';
     const rate=Number(value);
     if (!/^\d{1,5}$/.test(value)||rate>10000) throw failure('Tarif de paiement VoteNow indisponible.',503);
     // Apply the rate once to the nominal total, rounding half a franc up.
@@ -49,6 +49,7 @@ function quoteBreakdown(unitPrice,price,method) {
     return {
       method,currency:'XAF',unit_price_fcfa:unitPrice,votes_count:price.count,nominal_fcfa:price.gross,
       votenow_payment_fee_fcfa:fee,votenow_payment_fee_bps:rate,requested_amount_fcfa:requested,
+      ...(tariff ? {votenow_fee_version_id:tariff.id} : {}),
       collection_fee_fcfa:null,total_debit_fcfa:null,confirmable:false
     };
   }

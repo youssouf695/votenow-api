@@ -1,4 +1,5 @@
 const {randomUUID} = require('node:crypto');
+const sponsored = require('./sponsoredPayout');
 const db = require('../config/database');
 const {FinancialJournalEntry, FinancialJournalLine} = require('../models/FinancialJournal');
 
@@ -58,6 +59,7 @@ async function postWithdrawal(withdrawal, kind, source, transaction, operationId
     {entry_id: entryId, side: 'debit', account_id: accounts[debit], amount_fcfa: amount},
     {entry_id: entryId, side: 'credit', account_id: accounts[credit], amount_fcfa: amount}
   ], {transaction});
+  if (withdrawal.fee_policy === sponsored.POLICY) await sponsored.postFee(withdrawal, kind, transaction, operationId);
   return newBalance;
 }
 

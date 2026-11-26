@@ -516,7 +516,7 @@ exports.processWithdrawal = async (req, res) => {
       const provider = quote.network || { mtn_momo: 'MTN_MOMO_CMR', orange_money: 'ORANGE_CMR' }[withdrawal.method];
       const operation = await KpayOperation.create({ kind: 'PAYOUT', domain_id: withdrawal.id, request_key: withdrawal.id,
         external_id: externalId, fingerprint: hash([withdrawal.id, withdrawal.amount_fcfa, phone, provider]),
-        environment: config.mode, status: 'CREATED', expected_amount: quote.gross, target_net: withdrawal.amount_fcfa, pricing_snapshot: quote,
+        environment: config.mode, status: 'CREATED', expected_amount: quote.gross, target_net: quote.policy === 'votenow_pays_v1' ? quote.net : withdrawal.amount_fcfa, pricing_snapshot: quote,
         request_payload: { amount: quote.gross, provider, phoneNumber: phone, sourceCountry: 'CMR', externalId,
           description: 'Reversement VoteNow', metadata: { withdrawalId: withdrawal.id } },
       }, { transaction });

@@ -1,3 +1,4 @@
+const sponsored = require('./sponsoredPayout');
 const crypto = require('node:crypto');
 const {KpayOperation, Payment, Withdrawal, Event, Candidate, Vote, User, Commission} = require('../models');
 const sequelize = require('../config/database');
@@ -56,6 +57,10 @@ async function verifiedHistoricalBeneficiary(withdrawal, transaction) {
 }
 
 async function payoutQuote(withdrawal) {
+    if (withdrawal.fee_policy === sponsored.POLICY) {
+        await verifiedPayoutBeneficiary(withdrawal);
+        return sponsored.revalidate(withdrawal);
+    }
     if (process.env.KPAY_PAYOUT_PRICING_CONFIRMED !== 'true') {
         throw failure('Le tarif et l’arrondi des retraits doivent être confirmés auprès de KPay avant tout envoi. Aucun transfert lancé.', 503);
     }
@@ -93,6 +98,7 @@ async function applyEvent(event, internal = false, verifiedLookup = false, provi
         if ((operation.pricing_snapshot?.provider_selection?.provider_code || 'kpay') !== providerCode) throw failure('Fournisseur incohérent');
         if ((operation.kind !== prefix && !(operation.kind==='WALLET_TOPUP'&&prefix==='DEPOSIT')) || operation.environment !== getConfig().mode) throw failure('Opération incohérente');
         const payout = operation.kind === 'PAYOUT';
+        if (operation.kind==='WALLET_TOPUP'&&internal&&expected==='COMPLETED') throw failure('Confirmation de recharge invalide');
         if (payout && (internal || typeof event.paymentId !== 'string' || !event.paymentId.trim() ||
             (event.isTest != null && typeof event.isTest !== 'boolean') || (event.currency != null && event.currency !== 'XAF'))) {
             throw failure('Confirmation de retrait invalide');
@@ -155,7 +161,17 @@ async function applyEvent(event, internal = false, verifiedLookup = false, provi
             const topup=await WalletTopup.findByPk(operation.domain_id,{transaction,lock:transaction.LOCK.UPDATE});
             if(!topup||topup.status!=='pending')throw failure('Recharge déjà finalisée ou absente',409);
             if(expected==='COMPLETED'){
-                const delivered=net??optionalAmount(operation.provider_net),chargedFee=fee??optionalAmount(operation.provider_fee);
+                const policy=topup.pricing_snapshot?.fee_policy;
+                const {POLICY}=require('./walletTopupPricing');
+                // Initiation values are estimates. Only the legacy gross-for-net contract uses them.
+                const legacy=policy!=='same_as_vote'&&policy!==POLICY;
+                const delivered=net??(legacy?optionalAmount(operation.provider_net):null);
+                const chargedFee=fee??(legacy?optionalAmount(operation.provider_fee):null);
+                if(!legacy){
+                    details.provider_fee=fee;
+                    details.provider_net=net;
+                }
+                if(policy===POLICY)await require('./votenowFees').requireTopupAccounting(transaction);
                 const creditError=walletCredit(topup,operation,delivered,chargedFee);
                 if(creditError){await operation.update({...details,status:creditError==='NET_AMOUNT_MISSING'?'AWAITING_DETAILS':'RECONCILIATION',error_code:creditError},{transaction});return operation;}
                 await operation.update({error_code:null},{transaction});
@@ -221,7 +237,8 @@ async function applyEvent(event, internal = false, verifiedLookup = false, provi
                 return operation;
             }
             if (expected === 'COMPLETED') {
-                const delivered = net ?? (pendingFailure || event.netAmount != null ? null : payoutAmount(operation.provider_net));
+                const delivered = withdrawal.fee_policy === sponsored.POLICY ? net
+                    : net ?? (pendingFailure || event.netAmount != null ? null : payoutAmount(operation.provider_net));
                 if (delivered === null) {
                     // Un webhook peut précéder la réponse de l'initiation : on attend ses détails.
                     await operation.update({
@@ -238,6 +255,16 @@ async function applyEvent(event, internal = false, verifiedLookup = false, provi
                         error_code: 'NET_AMOUNT_MISMATCH'
                     }, {transaction});
                     return operation;
+                }
+                if (withdrawal.fee_policy === sponsored.POLICY) {
+                    const frozen = withdrawal.pricing_snapshot;
+                    const actualFee = fee ?? (event.feeAmount == null ? operation.expected_amount - delivered : null);
+                    if (!sponsored.matches(withdrawal, operation.pricing_snapshot) ||
+                        operation.target_net !== withdrawal.amount_fcfa || operation.expected_amount !== frozen.gross ||
+                        actualFee !== frozen.provider_fee) {
+                        await operation.update({...details, status:'RECONCILIATION', error_code:'PAYOUT_SPONSORED_TERMS_MISMATCH'}, {transaction});
+                        return operation;
+                    }
                 }
                 await postWithdrawal(withdrawal, 'settle', 'provider_success', transaction, operation.id);
                 await withdrawal.update({
@@ -350,7 +377,15 @@ async function dispatch(operationId) {
             organizerId = withdrawal.organizer_id;
             if (await organizerSuspended(organizerId, transaction)) throw suspendedPayout();
             const provider = row.pricing_snapshot?.network || {mtn_momo: 'MTN_MOMO_CMR', orange_money: 'ORANGE_CMR'}[withdrawal.method];
-            if (withdrawal.fee_policy === 'recipient_pays_v2') {
+            if (withdrawal.fee_policy === sponsored.POLICY) {
+                await verifiedPayoutBeneficiary(withdrawal, transaction);
+                const frozen = await sponsored.revalidate(withdrawal);
+                if (!sponsored.matches(withdrawal, row.pricing_snapshot) ||
+                    row.expected_amount !== frozen.gross || row.target_net !== frozen.net ||
+                    row.request_payload?.amount !== frozen.gross || row.request_payload?.provider !== frozen.network ||
+                    row.request_payload?.phoneNumber !== withdrawal.destination_phone) throw sponsored.changed();
+                await sponsored.assertReserved(withdrawal, transaction);
+            } else if (withdrawal.fee_policy === 'recipient_pays_v2') {
                 await verifiedPayoutBeneficiary(withdrawal, transaction);
                 if (row.expected_amount !== withdrawal.amount_fcfa || row.request_payload?.amount !== withdrawal.amount_fcfa ||
                     row.request_payload?.phoneNumber !== withdrawal.destination_phone || row.request_payload?.provider !== provider ||
@@ -370,6 +405,9 @@ async function dispatch(operationId) {
                     throw failure('Les coordonnées de l’envoi ne correspondent pas au bénéficiaire validé. Annulez le retrait.', 409);
                 }
             }
+        }
+        if (row.kind==='WALLET_TOPUP'&&row.pricing_snapshot?.fee_policy&&row.pricing_snapshot.fee_policy===require('./walletTopupPricing').POLICY) {
+            await require('./votenowFees').requireTopupAccounting(transaction);
         }
         if (managedOperation(row)) await require('./paymentProviders/manager').assertDispatch(row,transaction);
         await row.update({status: 'INITIATING', started_at: new Date()}, {transaction});
@@ -438,6 +476,7 @@ async function dispatch(operationId) {
             }, {transaction});
             return;
         }
+        if (row.kind==='WALLET_TOPUP'&&terminal.has(row.status)) return;
         const changes = {provider_id: result.id, provider_reference: result.reference || null};
         if (row.kind === 'PAYOUT' && ['FAILED', 'CANCELLED'].includes(result.status)) {
             if (row.status === 'INITIATING') await row.update({...changes, status: 'UNKNOWN', error_code: 'INIT_UNCERTAIN'}, {transaction});

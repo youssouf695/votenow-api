@@ -2,8 +2,14 @@ const { Withdrawal, User, Event, WithdrawalBeneficiary, KpayOperation } = requir
 const sequelize = require('../config/database'); // ✅ import direct
 const { validationResult } = require('express-validator');
 const { Op } = require('sequelize');
+const sponsored = require('../services/sponsoredPayout');
 const { postWithdrawal } = require('../services/withdrawalJournal');
 
+
+async function withdrawalQuote(amount, method) {
+  if (sponsored.enabled()) return sponsored.quote(amount, method);
+  return require('../services/recipientPayout').recipientQuote({amount_fcfa:amount,method});
+}
 
 function publicWithdrawal(row) {
   const {pricing_snapshot,request_key,...withdrawal}=row.toJSON();
@@ -27,7 +33,8 @@ exports.requestWithdrawal = async (req, res) => {
     }
     const selected=await WithdrawalBeneficiary.findOne({where:{id:req.body.beneficiary_id,user_id:req.user.id,deleted_at:null}});
     if(!selected?.verified_at)throw Object.assign(new Error('Sélectionnez un bénéficiaire validé par email.'),{status:400});
-    const quote=await require('../services/recipientPayout').recipientQuote({amount_fcfa:amount,method:selected.method});
+    const quote=await withdrawalQuote(amount,selected.method);
+    if((quote.policy===sponsored.POLICY || req.body.expected_policy!==undefined) && req.body.expected_policy!==quote.policy)throw Object.assign(new Error('La politique de retrait a changé. Vérifiez le nouveau devis.'),{status:409});
     if(!Number.isInteger(req.body.expected_fee)||!Number.isInteger(req.body.expected_net)||req.body.expected_fee!==quote.fee||req.body.expected_net!==quote.net)throw Object.assign(new Error('Le tarif a changé ou le récapitulatif manque. Vérifiez le montant reçu avant de confirmer.'),{status:409});
     const result = await sequelize.transaction(async transaction => {
       const user = await User.findByPk(req.user.id, { transaction, lock: transaction.LOCK.UPDATE });
@@ -50,7 +57,7 @@ exports.requestWithdrawal = async (req, res) => {
         if (!event) throw Object.assign(new Error('Événement non trouvé'), { status: 404 });
       }
       const withdrawal = await Withdrawal.create({ organizer_id: user.id, event_id: req.body.event_id || null,
-        fee_policy:'recipient_pays_v2',fee_fcfa:quote.fee,net_fcfa:quote.net,pricing_snapshot:quote,
+        fee_policy:quote.policy,fee_fcfa:quote.fee,net_fcfa:quote.net,pricing_snapshot:quote,
         beneficiary_verified_at: beneficiary.verified_at,
         beneficiary_id: beneficiary.id, request_key: req.body.request_id, destination_name: beneficiary.full_name,
         amount_fcfa: amount, method, destination_phone: phone, status: 'pending' }, { transaction });
@@ -154,7 +161,7 @@ exports.cancelWithdrawal = async (req, res) => {
       const where = { id: req.params.id, organizer_id: req.user.id };
       const snapshot = await Withdrawal.findOne({ where, transaction });
       let operation;
-      if (snapshot?.status === 'processing' && snapshot.fee_policy !== 'recipient_pays_v2') {
+      if (snapshot?.status === 'processing' && !['recipient_pays_v2', sponsored.POLICY].includes(snapshot.fee_policy)) {
         // Dispatch locks the operation before the withdrawal.
         operation = await KpayOperation.findOne({
           where: { kind: 'PAYOUT', domain_id: snapshot.id }, transaction, lock: transaction.LOCK.UPDATE
@@ -167,7 +174,7 @@ exports.cancelWithdrawal = async (req, res) => {
         transaction,
         lock: transaction.LOCK.UPDATE
       });
-      const unsentHistorical = withdrawal?.status === 'processing' && withdrawal.fee_policy !== 'recipient_pays_v2' &&
+      const unsentHistorical = withdrawal?.status === 'processing' && !['recipient_pays_v2', sponsored.POLICY].includes(withdrawal.fee_policy) &&
         operation?.status === 'CREATED' && !operation.started_at && !operation.provider_id && !operation.last_event;
       if (withdrawal?.status !== 'pending' && !unsentHistorical) throw Object.assign(new Error('Demande déjà traitée ou introuvable'), { status: 409 });
       if (unsentHistorical) await operation.update({ status: 'CANCELLED', completed_at: new Date() }, { transaction });
@@ -218,7 +225,8 @@ exports.quoteWithdrawal = async (req,res) => {
   if(typeof req.body.beneficiary_id!=='string'||!/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i.test(req.body.beneficiary_id))throw Object.assign(new Error('Bénéficiaire invalide'),{status:400});
   const beneficiary=await WithdrawalBeneficiary.findOne({where:{id:req.body.beneficiary_id,user_id:req.user.id,deleted_at:null}});
   if(!beneficiary?.verified_at)throw Object.assign(new Error('Bénéficiaire non validé'),{status:400});
-  const quote=await require('../services/recipientPayout').recipientQuote({amount_fcfa:amount,method:beneficiary.method});
-  res.set('Cache-Control','no-store').json({amount:quote.gross,fee:quote.fee,net:quote.net,rate:quote.rate,beneficiary_id:beneficiary.id,fee_policy:quote.policy});
+  const quote=await withdrawalQuote(amount,beneficiary.method);
+  if(quote.policy===sponsored.POLICY)await sponsored.checkFunding(quote);
+  res.set('Cache-Control','no-store').json({amount,fee:quote.fee,net:quote.net,rate:quote.rate,beneficiary_id:beneficiary.id,fee_policy:quote.policy});
  }catch(error){res.status(error.status||503).json({error:error.status?error.message:'Tarif de retrait temporairement indisponible'});}
 };

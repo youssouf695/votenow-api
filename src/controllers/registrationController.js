@@ -1,6 +1,7 @@
 const crypto=require('node:crypto'),bcrypt=require('bcryptjs'),jwt=require('jsonwebtoken');
 const {Op,where,fn,col}=require('sequelize'),db=require('../config/database'),{User}=require('../models'),{PendingRegistration}=require('../models/Wallet'),env=require('../config/env');
 const {sendVerificationEmail}=require('../services/email');
+const {emailLanguage}=require('../templates/transactionalEmail');
 const fail=(message,status=400)=>Object.assign(new Error(message),{status});
 function digest(id,email,code){if(!env.jwt.secret||env.jwt.secret.length<32)throw fail('Configuration de vérification indisponible',503);return crypto.createHmac('sha256',env.jwt.secret).update(JSON.stringify(['registration',id,email,code])).digest('hex')}
 function error(res,e){console.error('[registration.error]',{name:e.name,code:e.original?.code||e.code||null});res.status(e.status||e.name==='SequelizeUniqueConstraintError'&&409||503).json({error:e.status?e.message:e.name==='SequelizeUniqueConstraintError'?'Email ou téléphone déjà utilisé':'Inscription temporairement indisponible'})}
@@ -14,7 +15,7 @@ exports.send=async(req,res)=>{try{
  await db.query(`DELETE FROM pending_registrations WHERE id IN (SELECT id FROM pending_registrations WHERE expires_at < now() ORDER BY expires_at LIMIT 1000)`);
  const code=crypto.randomInt(100000,1000000).toString(),id=crypto.randomUUID(),data={full_name:full_name.trim(),phone,role,password_hash:await bcrypt.hash(password,12)};
  await PendingRegistration.upsert({id,email,data,code_hash:digest(id,email,code),attempts:0,expires_at:new Date(Date.now()+15*60000)});
- try{await sendVerificationEmail(email,code,data.full_name)}catch{await PendingRegistration.destroy({where:{email,id}});throw fail('Le code n’a pas pu être envoyé. Réessayez plus tard.',503)}
+ try{await sendVerificationEmail(email,code,data.full_name,{kind:'registration',language:emailLanguage(req)})}catch{await PendingRegistration.destroy({where:{email,id}});throw fail('Le code n’a pas pu être envoyé. Réessayez plus tard.',503)}
  res.json({message:'Code envoyé par email',expires_in:15});
 }catch(e){error(res,e)}};
 exports.verify=async(req,res)=>{try{

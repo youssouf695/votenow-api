@@ -7,6 +7,7 @@ const { classifyFailure, publicFailure } = require('../src/services/paymentFailu
 const Op = Object.fromEntries(['or','and','in','gt','lte'].map(k => [k, Symbol(k)]));
 function load(file, dependencies) {
   dependencies['./walletCredit']=require('../src/services/walletCredit');
+  dependencies['./sponsoredPayout']={POLICY:'votenow_pays_v1'};
   const module = { exports: {} };
   vm.runInNewContext(fs.readFileSync(path.join(__dirname, '../src/', file), 'utf8'), {module, exports: module.exports, require: name => {
     if (name in dependencies) return dependencies[name];

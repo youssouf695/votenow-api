@@ -1,5 +1,6 @@
 const { User, Verification } = require('../models');
 const { sendVerificationEmail } = require('../services/email');
+const {emailLanguage}=require('../templates/transactionalEmail');
 const { Op } = require('sequelize');
 const jwt = require('jsonwebtoken');
 const env = require('../config/env');
@@ -42,7 +43,7 @@ exports.sendVerificationCode = async (req, res) => {
     });
 
     if (method === 'email') {
-      await sendVerificationEmail(user.email, code, user.full_name);
+      await sendVerificationEmail(user.email, code, user.full_name,{kind:'verification',language:emailLanguage(req)});
     } else if (method === 'whatsapp') {
       await sendVerificationWhatsApp(user.phone, code, user.full_name);
     }

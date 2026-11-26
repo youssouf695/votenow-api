@@ -7,6 +7,7 @@ const {normalizePhone, integer} = require('../services/kpayAmounts');
 const {hash, dispatch, failure, reconcileDeposit} = require('../services/kpayOperations');
 const kpay = require('../services/kpayClient');
 const {getConfig} = require('../config/kpay');
+const {mobileVoteTariff} = require('../services/votenowFees');
 const {votePrice,quoteBreakdown,unavailableKpayTotal,kpayVoteMode,MAX_MOBILE_VOTES,MAX_MOBILE_AMOUNT} = require('../services/votePricing');
 const {networks,depositHealth}=require('../services/paymentProviders/mobileHealth');
 const mobileMethod='mobile_money';
@@ -79,7 +80,7 @@ exports.quoteVote = async (req,res) => {
     try {
         const {unitPrice,price}=await votePrice(req.body,undefined,MAX_MOBILE_VOTES);
         const mode=kpayVoteMode();
-        const quote=quoteBreakdown(unitPrice,price,mobileMethod);
+        const quote=quoteBreakdown(unitPrice,price,mobileMethod,await mobileVoteTariff());
         return res.set('Cache-Control','no-store').json({
             ...quote,
             budget_fcfa:req.body.nominal_budget_fcfa===undefined?price.gross:Number(req.body.nominal_budget_fcfa),
@@ -173,21 +174,21 @@ exports.initiatePayment = async (req, res) => {
             throw Object.assign(failure(message,409),{code});
         }
         const selection={event_id,candidate_id,votes_count:quantity,nominal_budget_fcfa:req.body.nominal_budget_fcfa};
-        const verifyQuote=({unitPrice,price})=>{
-            const quote=quoteBreakdown(unitPrice,price,mobileMethod);
+        const verifyQuote=async ({unitPrice,price},transaction)=>{
+            const quote=quoteBreakdown(unitPrice,price,mobileMethod,await mobileVoteTariff(transaction));
             if (quote.requested_amount_fcfa!==quotedAmount || price.count!==quantity) {
                 throw Object.assign(failure('Le prix a changé. Actualisez le devis avant de confirmer.',409),{code:'VOTE_QUOTE_CHANGED'});
             }
             return quote;
         };
-        verifyQuote(await votePrice(selection,undefined,MAX_MOBILE_VOTES));
+        await verifyQuote(await votePrice(selection,undefined,MAX_MOBILE_VOTES));
         const provider=await selectVoteProvider(environment,quotedAmount,phone,req.body.rail||null);
         const paymentId=randomUUID();
         const externalId=`vn-v-${paymentId}`;
         try {
             operation=await sequelize.transaction(async transaction=>{
                 const current=await votePrice(selection,transaction,MAX_MOBILE_VOTES);
-                const quote=verifyQuote(current);
+                const quote=await verifyQuote(current,transaction);
                 const {price}=current;
                 await Payment.create({
                     id:paymentId,event_id,candidate_id,voter_phone:phone,

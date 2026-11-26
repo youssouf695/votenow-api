@@ -6,6 +6,7 @@ const {normalizePhone}=require('../services/kpayAmounts');
 const kpay=require('../services/kpayClient');
 const codes=require('../services/beneficiaryCode');
 const send=require('../services/beneficiaryEmail');
+const {emailLanguage}=require('../templates/transactionalEmail');
 const fail=(message,status=400)=>Object.assign(new Error(message),{status});
 const uuid=value=>typeof value==='string'&&/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i.test(value);
 function view(row){return {id:row.id,full_name:row.full_name,phone:row.phone,method:row.method,verified_at:row.verified_at,expires_at:row.expires_at,last_sent_at:row.last_sent_at};}
@@ -42,13 +43,13 @@ exports.create=async(req,res)=>{try{
   else row=await WithdrawalBeneficiary.create({user_id:user.id,full_name:name,phone,method},{transaction});
   const code=await challenge(row,user,transaction);return {user,row,code};
  });
- await send(result.user,result.row,result.code);
+ await send(result.user,result.row,result.code,{language:emailLanguage(req)});
  res.status(201).json({message:'Code envoyé à l’email de votre compte',beneficiary:view(result.row),resend_after:30});
 }catch(error){respond(res,error);}};
 exports.resend=async(req,res)=>{try{
  codes.checkConfiguration();
  const result=await sequelize.transaction(async transaction=>{const user=await lockUser(req.user.id,transaction);const row=await lockRow(req.params.id,user.id,transaction);const code=await challenge(row,user,transaction);return {user,row,code};});
- await send(result.user,result.row,result.code);res.json({message:'Nouveau code envoyé',beneficiary:view(result.row),resend_after:30});
+ await send(result.user,result.row,result.code,{kind:'beneficiaryResend',language:emailLanguage(req)});res.json({message:'Nouveau code envoyé',beneficiary:view(result.row),resend_after:30});
 }catch(error){respond(res,error);}};
 exports.verify=async(req,res)=>{try{
  codes.checkConfiguration();

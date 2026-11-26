@@ -9,6 +9,8 @@ const campaignCommission = require('../controllers/campaignCommissionController'
 // Toutes les routes admin nécessitent authentification et rôle admin
 router.use(auth);
 router.use(authorize('admin'));
+router.post('/users/:userId/wallet-card',require('./walletCardRoutes').admin);
+router.use('/finance/book', require('./financialBookRoutes'));
 router.use('/finance/payment-providers', require('./paymentProviderAdminRoutes'));
 router.use('/transactions', require('./transactionRoutes'));
 

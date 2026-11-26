@@ -41,15 +41,15 @@ function createManager(adapters = {kpay}) {
     if(!item)throw unavailable();
     return item;
   }
-  async function select({environment,direction,amount,rail=null,phone=null,capabilityId=null,simulation=false,asOf=null}) {
-    if(!directions.includes(direction)||!validInt(amount,1)||!['sandbox','production'].includes(environment)||(rail&&!rails.includes(rail)))throw invalid('Devis invalide');
+  async function select({environment,direction,amount,rail=null,phone=null,capabilityId=null,simulation=false,asOf=null,exactNet=false}) {
+    if((exactNet && (direction!=='payout'||simulation))||!directions.includes(direction)||!validInt(amount,1)||!['sandbox','production'].includes(environment)||(rail&&!rails.includes(rail)))throw invalid('Devis invalide');
     if(asOf!==null&&(!simulation||typeof asOf!=='string'||!/(Z|[+-]\d\d:\d\d)$/.test(asOf)||!Number.isFinite(Date.parse(asOf))))throw invalid('Date avec fuseau requise');
     const rows=await query(`${view}
-      WHERE a.environment=:environment AND c.direction=:direction AND :amount BETWEEN c.min_amount AND c.max_amount
+      WHERE a.environment=:environment AND c.direction=:direction AND (:exactNet OR :amount BETWEEN c.min_amount AND c.max_amount)
         AND p.enabled AND a.enabled AND c.enabled AND (:rail IS NULL OR c.rail=:rail)
         AND (:capabilityId IS NULL OR c.id=:capabilityId)
       ORDER BY c.priority,a.provider_code,a.account_key,c.rail
-    `,{environment,direction,amount,rail,capabilityId});
+    `,{environment,direction,amount,rail,capabilityId,exactNet});
     for(const route of rows) {
       const driver=Object.hasOwn(adapters,route.provider_code)&&adapters[route.provider_code];
       if(!driver)continue;
@@ -65,9 +65,16 @@ function createManager(adapters = {kpay}) {
         try{terms={...version,...await driver.tariff(route)};}catch(_){continue;}
       }
       if(direction==='payout'&&!validInt(terms.rate_units,0,99999999))continue;
-      const total=terms.rate_units===null&&direction==='deposit'
-        ? {gross:null,fee:null,net:amount}
-        : price(amount,terms,direction);
+      let total;
+      if(exactNet){
+        try{total=await driver.quoteExactNet?.(route,amount,terms);}catch{continue;}
+        if(total?.net_contract!=='gross_less_fee_v1' || total.net!==amount || !validInt(total.gross,route.min_amount,route.max_amount) ||
+          !validInt(total.fee) || total.gross-total.fee!==amount)continue;
+      }else{
+        total=terms.rate_units===null&&direction==='deposit'
+          ? {gross:null,fee:null,net:amount}
+          : price(amount,terms,direction);
+      }
       return {
         ...total, environment, rail:route.rail, network:driver.network(route.rail),
         provider_selection:{capability_id:route.id,account_id:route.account_id,account_key:route.account_key,

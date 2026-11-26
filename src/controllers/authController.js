@@ -1,6 +1,7 @@
 const jwt = require('jsonwebtoken');
 const { User, LoginVerification } = require('../models');
 const { sendVerificationEmail } = require('../services/email');
+const {emailLanguage}=require('../templates/transactionalEmail');
 const { Op } = require('sequelize');
 const { randomInt } = require('node:crypto');
 const { resolveLoginUser, maskEmail } = require('../utils/loginIdentity');
@@ -99,7 +100,7 @@ exports.requestLoginCode = async (req, res) => {
     const verification = await LoginVerification.create({ email, code, expires_at: expiresAt });
 
     try {
-      await sendVerificationEmail(email, code, user.full_name);
+      await sendVerificationEmail(email, code, user.full_name,{kind:'login',language:emailLanguage(req)});
     } catch (error) {
       // Un code dont l'envoi a échoué ne doit pas rester utilisable.
       await verification.update({ used: true });
