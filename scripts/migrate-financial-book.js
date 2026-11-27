@@ -3,7 +3,6 @@ const path = require('node:path');
 const sql = file => fs.readFileSync(path.join(__dirname, file), 'utf8');
 
 async function install(client, rate) {
-  if (!/^\d{1,5}$/.test(rate) || Number(rate) > 10000) throw new Error('Tarif Mobile Money invalide');
   await client.query('SELECT pg_advisory_xact_lock(82114730)');
   const [{installed, ready}] = await client.query(`
     SELECT to_regclass('financial_book') IS NOT NULL AS installed,
@@ -17,16 +16,25 @@ async function install(client, rate) {
   const [{unverified}] = await client.query('SELECT EXISTS (SELECT 1 FROM payout_fee_funding WHERE funded_fcfa<>0) AS unverified');
   if (unverified) throw new Error('Rapprocher le financement existant avant installation du grand livre');
   await client.query(sql('financial-book.sql'));
+  await finalize(client,rate);
+}
+
+async function finalize(client,rate) {
   await client.query(`
     INSERT INTO votenow_fee_versions(flow,rate_bps,effective_at,reason)
-    VALUES ('mobile_vote',${Number(rate)},transaction_timestamp(),'Tarif existant à la bascule'),
-           ('card_topup',500,transaction_timestamp(),'Tarif préparé, flux désactivé')
+    VALUES ('mobile_vote',${Number(rate)},statement_timestamp(),'Tarif existant à la bascule'),
+           ('card_topup',500,statement_timestamp(),'Tarif préparé, flux désactivé')
   `);
   await client.query(sql('financial-opening.sql'));
 }
 
-async function coordinated(client, rate) {
+async function coordinated(client, rate, {activateStaged=false}={}) {
+  if (!/^\d{1,5}$/.test(rate) || Number(rate) > 10000) throw new Error('Tarif Mobile Money invalide');
   await client.query('SELECT pg_advisory_xact_lock(82114727)');
+  const stage=require('./financial-book-stage');
+  if(activateStaged)return stage.activateStage(client,rate,finalize);
+  const [{staged}]=await client.query("SELECT current_schema()='public' AND to_regnamespace('votenow_financial_stage') IS NOT NULL AS staged");
+  if(staged)throw Error('Utiliser prepare-financial-cutover.js --activate pour le schéma passif.');
   const db = {transaction: fn => fn(null), query: async statement => [await client.query(statement)]};
   await require('./migrate-financial-journal')(db);
   await require('./migrate-sponsored-payout')(db);

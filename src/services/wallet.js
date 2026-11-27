@@ -9,7 +9,9 @@ const {POLICY,topupFee}=require('./walletTopupPricing');
 function uuid(value){if(typeof value!=='string'||!/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i.test(value))throw failure('Référence invalide');return value}
 async function account(user,transaction){const row=await WalletAccount.findOne({where:{user_id:user.id},transaction,...(transaction?{lock:transaction.LOCK.UPDATE}:{})});if(!row)throw failure('Activez votre VoteNow Card.',409);return row}
 async function quote(amount,phone){
- amount=integer(amount);if(amount<100||amount>1000000)throw failure('Recharge de 100 à 1 000 000 FCFA requise');phone=normalizePhone(phone);
+ amount=integer(amount);
+ if(amount<500||amount>1000000||amount%500!==0)throw failure('Saisissez un multiple de 500 FCFA, entre 500 et 1 000 000 FCFA.');
+ phone=normalizePhone(phone);
  const config=getConfig();
  const withFee=process.env.WALLET_TOPUP_FEES_ENABLED==='true'&&config.mode==='production';
  const tariff=withFee?await require('./votenowFees').cardTopupTariff():null;

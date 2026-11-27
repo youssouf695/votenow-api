@@ -3,6 +3,12 @@ const sequelize = require('../config/database');
 const { resolveLoginUser, normalizeIdentifier } = require('../utils/loginIdentity');
 
 async function initializeRateLimits() {
+  const [[{ready}]] = await sequelize.query(`
+    SELECT to_regclass('api_rate_limits') IS NOT NULL
+      AND to_regclass('api_rate_limits_expiry_idx') IS NOT NULL AS ready
+  `);
+  if (ready) return;
+
   await sequelize.query(`
     CREATE TABLE IF NOT EXISTS api_rate_limits (
       bucket_key VARCHAR(64) PRIMARY KEY,
